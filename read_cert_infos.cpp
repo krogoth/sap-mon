@@ -4,10 +4,7 @@
 #include <stdlib.h>
 #include <iostream>
 #include <errno.h>
-#include <signal.h>
 #include <time.h>
-#include <errno.h>
-#include <signal.h>
 #include <sstream>
 #include <vector>
 #include <algorithm>
@@ -32,326 +29,134 @@
 
 using namespace std;
 
-extern string cert_subject;
-extern string cert_valud_until;
-extern vector<string> certlist_array;
-extern vector<string> certlist_subj_valid_until;
-extern bool ssl_check;
-
-void read_cert_infos()
+// Returns vector of "SubjectName;;;###ValidUntil" entries.
+vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_check)
 {
+    string zeichenvorrat = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-	
-	
-	
-	
-	
-	int anzahl_certis = - 1;
-	anzahl_certis = certlist_array.size();
-	
-	
-	string cert_hex;
-	int cert_gesammt_laenge = - 1;
-	int reine_cert_laenge = - 1;
-	int finde_semikolon = - 1 ;
-	string sap_context;
-	string sap_applic;
-	
-	
-	
-	
-	string cert_base64 = "";
-	string zeichenvorrat = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	
-	int bytes = - 1; 
-	
-	int padding = - 1 ;
-	int count = - 1; 
-	unsigned long long dezimal_nummer_long = 0;
-	int j = 0;
-	
-	
-	OpenSSL_add_all_algorithms();
-	OPENSSL_no_config();
-	ERR_load_BIO_strings();					
-	ERR_load_crypto_strings();				
+    OpenSSL_add_all_algorithms();
+    OPENSSL_no_config();
+    ERR_load_BIO_strings();
+    ERR_load_crypto_strings();
 
-	X509 *x509 = NULL;
-	char *dataStart = NULL;
-	char *subjectString = NULL;
-	long nameLength = - 1;
-	string subj_string;
-BIO *bio_out = NULL;
-	const char *zertifikat_in_base64_format = NULL;
-	int rc = - 1 ;
-	char *start_punkt = NULL;
-	char *valid_until_char = NULL;
-	long laenge = - 1;
-	
-	
-	
-		
-	
+    vector<string> certlist_subj_valid_until;
 
-	
-	for (int i = 0 ; i < anzahl_certis; i++ )
-	{
-		
-		
-		cert_gesammt_laenge = certlist_array[i].length();
-		
-		
-		
-		finde_semikolon = certlist_array[i].find(";;;");
-		
-		cert_hex = certlist_array[i].substr(0,finde_semikolon);
-		
-		
-		
-		finde_semikolon = certlist_array[i].find(";;;",finde_semikolon);
-		
-		sap_context = certlist_array[i].substr(finde_semikolon + 3, 4);		
-		
-		
-		
-		finde_semikolon = certlist_array[i].find(";;;",finde_semikolon + 3);
-		
-		sap_applic = certlist_array[i].substr(finde_semikolon + 3, 99);		
-		
-		
-		
-		
-		
+    for (size_t i = 0; i < certlist_array.size(); ++i) {
+        int finde_semikolon = certlist_array[i].find(";;;");
+        string cert_hex     = certlist_array[i].substr(0, finde_semikolon);
 
-		
-		
-		
-		
-		bytes = cert_hex.size() / 3;
-		padding = cert_hex.size() % 3;
-		count = bytes * 3;
+        int bytes   = cert_hex.size() / 3;
+        int padding = cert_hex.size() % 3;
+        int count   = bytes * 3;
+        unsigned long long dezimal_nummer_long = 0;
+        string cert_base64 = "";
+        int j = 0;
 
-		
-		
-		
-		
-		
+        for (j = 0; j < count; j += 3) {
+            char e1[2] = {cert_hex[j],   0};
+            char e2[2] = {cert_hex[j+1], 0};
+            char e3[2] = {cert_hex[j+2], 0};
+            dezimal_nummer_long  = strtoull(e1, nullptr, 16) << 8;
+            dezimal_nummer_long |= strtoull(e2, nullptr, 16) << 4;
+            dezimal_nummer_long |= strtoull(e3, nullptr, 16);
+            cert_base64 += zeichenvorrat[0x3F & (dezimal_nummer_long >> 6)];
+            cert_base64 += zeichenvorrat[0x3F & dezimal_nummer_long];
+        }
 
-		for(j = 0; j < count; j+=3) 
-		{
-			
-			
-			char erstes_zeichen[2] = {cert_hex[j], 0};
-			char zweites_zeichen[2] = {cert_hex[j+1], 0};
-			char drittes_zeichen[2] = {cert_hex[j+2], 0};
-			
-			
-			
-			dezimal_nummer_long = strtoull(erstes_zeichen, nullptr, 16) << 8; 
-			dezimal_nummer_long |= strtoull(zweites_zeichen, nullptr, 16) << 4; 
-			dezimal_nummer_long |= strtoull(drittes_zeichen, nullptr, 16); 
+        if (padding == 1) {
+            char e1[2] = {cert_hex[j], 0};
+            dezimal_nummer_long = strtoull(e1, nullptr, 16) << 8;
+            cert_base64 += zeichenvorrat[0x3F & (dezimal_nummer_long >> 6)];
+            cert_base64 += '=';
+        }
+        if (padding > 1) {
+            char e1[2] = {cert_hex[j],   0};
+            char e2[2] = {cert_hex[j+1], 0};
+            char e3[2] = {cert_hex[j+2], 0};
+            dezimal_nummer_long  = strtoull(e1, nullptr, 16) << 8;
+            dezimal_nummer_long |= strtoull(e2, nullptr, 16) << 4;
+            dezimal_nummer_long |= strtoull(e3, nullptr, 16);
+            cert_base64 += zeichenvorrat[0x3F & (dezimal_nummer_long >> 6)];
+            cert_base64 += zeichenvorrat[0x3F & dezimal_nummer_long];
+            cert_base64 += '=';
+            cert_base64 += '=';
+        }
 
-			
+        // Insert line breaks every 64 chars
+        string wrapped;
+        wrapped.reserve(cert_base64.size() + cert_base64.size() / 64 + 64);
+        for (size_t k = 0; k < cert_base64.size(); k += 64) {
+            wrapped += cert_base64.substr(k, 64);
+            wrapped += '\n';
+        }
+        cert_base64 = "-----BEGIN CERTIFICATE-----\n" + wrapped + "-----END CERTIFICATE-----";
 
-			cert_base64 += zeichenvorrat[0x3F & (dezimal_nummer_long >> 6)]; 
-			cert_base64 += zeichenvorrat[0x3F & dezimal_nummer_long]; 
-		}
-		
+        const char* pem = cert_base64.c_str();
 
-		if(padding == 1)
-		{
-			char erstes_zeichen[2] = {cert_hex[j], 0};
-			dezimal_nummer_long = strtoull(erstes_zeichen, nullptr, 16) << 8; 
-			cert_base64 += zeichenvorrat[0x3F & (dezimal_nummer_long >> 6)];
-			cert_base64 += '='; 
-		}
-	
-		
-		if(padding > 1)
-		{
-			
-			char erstes_zeichen[2] = {cert_hex[j], 0};
-			char zweites_zeichen[2] = {cert_hex[j+1], 0};
-			char drittes_zeichen[2] = {cert_hex[j+2], 0};
+        BIO* bio_mem = BIO_new(BIO_s_mem());
+        ERR_print_errors_fp(stderr);
+        BIO_puts(bio_mem, pem);
+        ERR_print_errors_fp(stderr);
 
-			
-			
-			dezimal_nummer_long = strtoull(erstes_zeichen, nullptr, 16) << 8; 
-			dezimal_nummer_long |= strtoull(zweites_zeichen, nullptr, 16) << 4; 
-			dezimal_nummer_long |= strtoull(drittes_zeichen, nullptr, 16); 
+        X509* x509 = PEM_read_bio_X509(bio_mem, NULL, NULL, NULL);
+        BIO_free(bio_mem);
+        if (!x509) {
+            cerr << "read_cert_infos: PEM_read_bio_X509 failed for entry " << i << endl;
+            ERR_print_errors_fp(stderr);
+            continue;
+        }
 
-			
+        // Extract subject name using a memory BIO — vector<char> avoids manual new/delete
+        BIO* subj_bio = BIO_new(BIO_s_mem());
+        X509_NAME* subject = X509_get_subject_name(x509);
+        if (!subject) {
+            cerr << "read_cert_infos: X509_get_subject_name failed for entry " << i << endl;
+            BIO_free(subj_bio);
+            X509_free(x509);
+            continue;
+        }
+        X509_NAME_print(subj_bio, subject, 0);
 
-			cert_base64 += zeichenvorrat[0x3F & (dezimal_nummer_long >> 6)]; 
-			cert_base64 += zeichenvorrat[0x3F & dezimal_nummer_long]; 
-			cert_base64 += '='; 
-			cert_base64 += '='; 
-		}
-		
+        char* dataStart = NULL;
+        long nameLength = BIO_get_mem_data(subj_bio, &dataStart);
+        vector<char> subjectBuf(dataStart, dataStart + nameLength);
+        string subj_string(subjectBuf.begin(), subjectBuf.end());
+        BIO_free(subj_bio);
 
-		
-		
-		
-		
-		int reine_zeichenkette_laenge = - 1;
-		reine_zeichenkette_laenge = cert_base64.length();
-		
+        if (!ssl_check)
+            cout << "\n Subject Name: " << subj_string << " ";
 
-		int seperator_auf_position = - 1 ;
-		for (int k = 0; k < reine_zeichenkette_laenge; k++)
-		{	
-			
-			
-			seperator_auf_position = k + 64;
-			
-			if (seperator_auf_position >= reine_zeichenkette_laenge)
-			{
-				
-				continue;
-			}
-			cert_base64 = cert_base64.insert( seperator_auf_position ,"\n");  
-			
-			
-			k = k + 64;
-		}
-		cert_base64 = "-----BEGIN CERTIFICATE-----\n" + cert_base64 + "\n-----END CERTIFICATE-----";
-		
-		
-		
-		
-		zeichenvorrat = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-		bytes = - 1; 
-		padding = - 1 ;
-		count = - 1; 
-		dezimal_nummer_long = 0;
-		j = 0;
-		
-		
-		
-		zertifikat_in_base64_format = cert_base64.c_str(); 
-		
-		
-		
-		
-		BIO *bio_mem = BIO_new(BIO_s_mem());
-			ERR_print_errors_fp (stderr);
-			
-			
-		BIO_puts(bio_mem, zertifikat_in_base64_format);
-			ERR_print_errors_fp (stderr);
-			
-		
-		
-		
-			
-			
-		x509 = PEM_read_bio_X509(bio_mem, NULL, NULL, NULL);
-			ERR_print_errors_fp (stderr);
-			
-			
-		X509_NAME *subject = X509_get_subject_name(x509);
-			ERR_print_errors_fp (stderr);
-		
-		X509_NAME_print(bio_mem, subject, 0);
-			ERR_print_errors_fp (stderr);
-			
-		dataStart = NULL;
-		subjectString = NULL;
-		
-		nameLength = BIO_get_mem_data(bio_mem, &dataStart);
-			ERR_print_errors_fp (stderr);
-			
-		
-		
-		subjectString = new char[nameLength + 1];
-		memset(subjectString, 0x00, nameLength + 1);
-		memcpy(subjectString, dataStart, nameLength);
-	
-		string subj_string = subjectString;
-		
-		
-		if (ssl_check == false)
-		{
-			cout<<"\n Subject Name: "<<subj_string<<" ";
-		}
-		
-		
-		
-		
-		
-		
-		dataStart = NULL;
-		subjectString = NULL;
-		nameLength = - 1;
-		
-		bio_out = NULL;
-		zertifikat_in_base64_format = NULL;
-		
-		
-		bio_mem = NULL;
-		
-		
-		BIO *validBio = BIO_new(BIO_s_mem());
-			ERR_print_errors_fp (stderr);
-			
-		ASN1_TIME *valid_until = X509_get_notAfter(x509);
-			ERR_print_errors_fp (stderr);
-			
-		ASN1_TIME_print(validBio, valid_until);
-			ERR_print_errors_fp (stderr);
-			
-		start_punkt = NULL;
-		valid_until_char = NULL;
-	
-		laenge = BIO_get_mem_data(validBio, &start_punkt);
-			ERR_print_errors_fp (stderr);
-		
-		
-		
-		valid_until_char = new char[laenge + 1];
+        // Extract expiry date
+        BIO* validBio = BIO_new(BIO_s_mem());
+        ASN1_TIME* valid_until = X509_get_notAfter(x509);
+        if (!valid_until) {
+            cerr << "read_cert_infos: X509_get_notAfter failed for entry " << i << endl;
+            BIO_free(validBio);
+            X509_free(x509);
+            continue;
+        }
+        ASN1_TIME_print(validBio, valid_until);
 
-		memset(valid_until_char, 0x00, laenge + 1);
-		memcpy(valid_until_char, start_punkt, laenge);
+        char* start_punkt = NULL;
+        long laenge = BIO_get_mem_data(validBio, &start_punkt);
+        vector<char> validBuf(start_punkt, start_punkt + laenge);
+        string valid_until_string(validBuf.begin(), validBuf.end());
+        BIO_free(validBio);
 
-		string valid_until_string = valid_until_char;
-		
-		
-		if (ssl_check == false)
-		{
-			cout<<" Gültig bis: "<<valid_until_string<<endl;
-		}
-		
-	
-		certlist_subj_valid_until.push_back(subj_string + ";;;###" + valid_until_string);
+        if (!ssl_check)
+            cout << " Gültig bis: " << valid_until_string << endl;
 
-		
-		
-		
-		
+        certlist_subj_valid_until.push_back(subj_string + ";;;###" + valid_until_string);
 
-		BIO_free(validBio);
-		
-		x509 = NULL;
-		
-		
-		
-		subj_string = "";
-		
-		cert_base64 = "";
-		
-		
-		
-	}
-	
+        X509_free(x509);
 
+        zeichenvorrat = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        cert_base64 = "";
+    }
 
-	BIO_free(bio_out);
-	X509_free(x509);
+    EVP_cleanup();
+    CRYPTO_cleanup_all_ex_data();
+    ERR_free_strings();
 
-	EVP_cleanup();
-	CRYPTO_cleanup_all_ex_data();
-	ERR_free_strings();
-
-	
-	
+    return certlist_subj_valid_until;
 }

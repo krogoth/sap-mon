@@ -1,925 +1,271 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include <unistd.h>
 #include <stdio.h>
 #include <string>
 #include <stdlib.h>
 #include <iostream>
 #include <errno.h>
-#include <signal.h>
 #include <time.h>
-#include <errno.h>
-#include <signal.h>
 #include <sstream>
 #include <vector>
 #include <algorithm>
 #include <iterator>
 #include <iomanip>
 #include <fstream>
-
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/xml_parser.hpp>			
-#include <boost/foreach.hpp>
-
-
 #include <regex>
 
-
-
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
+#include <boost/foreach.hpp>
 #include <boost/array.hpp>
+
+#include "sap_utils.h"
 
 using namespace std;
 namespace pt = boost::property_tree;
 
-extern string web_service_wert_rueckgabe;
-extern string sapcontrol_monitor_name_extern;
-extern int icinga_retun_code;
-extern string rueckgabe_nachricht;
-extern string parameter;		
-extern string cert_subject;
-extern string cert_valud_until;
-extern string sapgenpse_parameter;
-extern vector<string> certlist_array;
-
-extern string type_extern;
-extern string heap_memory_size;
-
-void xml_extract()
-
+// Returns Icinga exit code. certlist accumulates entries from OSExecute paths.
+int xml_extract(const string& web_response, const CliParams& p, vector<string>& certlist)
 {
+    smatch reg_match;
 
+    boost::property_tree::ptree ptree;
+    istringstream iss(web_response);
+    read_xml(iss, ptree);
 
-	
-	
-	
-	
-	std::smatch reg_match;		
-	
-	boost::property_tree::ptree pt;
+    int wo_ist_sapcontrol_response = web_response.find("SAPControl:");
 
-	
-	
-	
-        
-	istringstream iss(web_service_wert_rueckgabe);
-		
-    read_xml(iss, pt);
-	
-	
-	
-	int wo_ist_sapcontrol_response_abschnitt = - 1;
-	wo_ist_sapcontrol_response_abschnitt = web_service_wert_rueckgabe.find("SAPControl:");
-	
-	
-	int wo_ist_type = - 1;
-	wo_ist_type = type_extern.find("=");
-	type_extern = type_extern.substr(wo_ist_type + 1, type_extern.length());
-	
+    string type = p.type;
 
+    // -javashow: print WSDL methods and exit
+    regex rx_javashow("^-javashow$");
+    if (regex_search(p.sapcontrol, reg_match, rx_javashow)) {
+        string buf = web_response;
+        bool anzeige = false;
+        while (true) {
+            int anfang = buf.find("<item>");
+            int ende   = buf.find("</item>");
 
-	std::regex regex_1("^-javashow$");
-	if (std::regex_search(parameter, reg_match, regex_1))
-	{
-		
-		int wo_ist_item_anfang = - 1;
-		int wo_ist_item_ende = - 1;
-		string item_wert ;
-		
-		
-		
-		
-		
-		bool anzeige = false;
-		while(1)
-		{			
-			wo_ist_item_anfang = web_service_wert_rueckgabe.find("<item>");
-			
-			wo_ist_item_ende = web_service_wert_rueckgabe.find("</item>");
-			
-			
-			
-			
-			
-			
-			
-			
-			try{item_wert = web_service_wert_rueckgabe.substr(wo_ist_item_anfang + 6,wo_ist_item_ende - wo_ist_item_anfang );}catch( std::out_of_range& exception ){cout<<"Error xml_extract.cpp std::out_of_range"<<endl;exit(0);}
-			
-			
-			try{web_service_wert_rueckgabe = web_service_wert_rueckgabe.substr(wo_ist_item_ende + 7, web_service_wert_rueckgabe.length());}catch( std::out_of_range& exception ){cout<<"Error xml_extract.cpp std::out_of_range"<<endl;exit(0);}
-			
-			if (item_wert == "WEBMETHODS</item")
-			{
-				
-				anzeige = true;
-				
-			}
-			if (item_wert == "EXITCODES</item")
-			{
-				
-				anzeige = false;
-			}
-			if (anzeige == true)
-			{
-				
-				try{item_wert = item_wert.substr(0 , item_wert.length() - 6 );}catch( std::out_of_range& exception ){cout<<"Error xml_extract.cpp std::out_of_range"<<endl;exit(0);}
-				
-				
-				
-				
-				
-				
-				
-				
-				
-				std::string result;				
-				std::regex e ("&lt");
-				
-				std::regex_replace (std::back_inserter(result), item_wert.begin(), item_wert.end(), e, "<");
-				
-				std::string result_2;				
-				std::regex e_2 ("&gt");
-				std::regex_replace (std::back_inserter(result_2), result.begin(), result.end(), e_2, ">");
-				
-				std::string result_3;				
-				std::regex e_3 (";");
-				std::regex_replace (std::back_inserter(result_3), result_2.begin(), result_2.end(), e_3, "");
-				std::cout << result_3<<endl;
-				
-			}
-			if (item_wert == "")
-			{
-				
-				
-				break;
-			}
-			
-			
-			
-			
-			
-			
+            string item;
+            try { item = buf.substr(anfang + 6, ende - anfang); }
+            catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }
+            try { buf  = buf.substr(ende + 7, buf.length()); }
+            catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }
 
-		}
-		
-		exit(0);
-	}
+            if (item == "WEBMETHODS</item") anzeige = true;
+            if (item == "EXITCODES</item")  anzeige = false;
 
-	
+            if (anzeige) {
+                string r1, r2, r3;
+                regex_replace(back_inserter(r1), item.begin(), item.end(), regex("&lt"), string("<"));
+                regex_replace(back_inserter(r2), r1.begin(),  r1.end(),   regex("&gt"), string(">"));
+                regex_replace(back_inserter(r3), r2.begin(),  r2.end(),   regex(";"),   string(""));
+                try { r3 = r3.substr(0, r3.length() - 6); } catch (...) {}
+                cout << r3 << endl;
+            }
+            if (item.empty()) break;
+        }
+        exit(0);
+    }
 
-	
-	
-	int wo_ist_GetProcessListResponse = - 1;
-	wo_ist_GetProcessListResponse = web_service_wert_rueckgabe.find("<SAPControl:GetProcessListResponse>");	
-	
-	
-	int wo_ist_exitcode_null = - 1;
-	wo_ist_exitcode_null = web_service_wert_rueckgabe.find("<exitcode>0</exitcode>");
-	
-	
-	
-	int wo_ist_GetAlertsResponse = - 1;
-	wo_ist_GetAlertsResponse = web_service_wert_rueckgabe.find("<SAPControl:GetAlertsResponse>");	
-	
-	
-	int wo_ist_exit_code = - 1;
-	wo_ist_exit_code = web_service_wert_rueckgabe.find("<exitcode>11</exitcode>");	
-	
-	
-	int wo_ist_GetAlertTreeResponse = - 1;
-	wo_ist_GetAlertTreeResponse = web_service_wert_rueckgabe.find("<SAPControl:GetAlertTreeResponse>");	
-	
-	
-	int wo_ist_J2EEGetProcessListResponse = - 1;
-	wo_ist_J2EEGetProcessListResponse = web_service_wert_rueckgabe.find("<SAPControl:J2EEGetProcessListResponse>");	
-	
-	
-	int wo_ist_J2EEGetComponentListResponse = - 1;
-	wo_ist_J2EEGetComponentListResponse = web_service_wert_rueckgabe.find("<SAPControl:J2EEGetComponentListResponse>");	
-	
-	
-	int wo_ist_J2EEGetVMHeapInfoResponse = - 1;
-	wo_ist_J2EEGetVMHeapInfoResponse = web_service_wert_rueckgabe.find("<SAPControl:J2EEGetVMHeapInfoResponse>");	
-	
-	
-	
+    int wo_GetProcessList   = web_response.find("<SAPControl:GetProcessListResponse>");
+    int wo_exitcode_null    = web_response.find("<exitcode>0</exitcode>");
+    int wo_GetAlerts        = web_response.find("<SAPControl:GetAlertsResponse>");
+    int wo_exit11           = web_response.find("<exitcode>11</exitcode>");
+    int wo_GetAlertTree     = web_response.find("<SAPControl:GetAlertTreeResponse>");
+    int wo_J2EEProcess      = web_response.find("<SAPControl:J2EEGetProcessListResponse>");
+    int wo_J2EEComponent    = web_response.find("<SAPControl:J2EEGetComponentListResponse>");
+    int wo_J2EEHeap         = web_response.find("<SAPControl:J2EEGetVMHeapInfoResponse>");
 
-	if (wo_ist_exit_code > - 1)
-	{
-		
-		cout<<"\nFehler: ";
-		cout<<web_service_wert_rueckgabe<<endl;
-		
-		
-		return;							
-		
-		
-	}
+    if (wo_exit11 > -1) {
+        cout << "\nFehler: " << web_response << endl;
+        return -1;
+    }
 
-	
-	
-	
-	
-	
+    if (wo_GetProcessList == -1 && wo_exitcode_null == -1 && wo_GetAlerts == -1
+     && wo_GetAlertTree   == -1 && wo_J2EEProcess  == -1 && wo_J2EEComponent == -1
+     && wo_J2EEHeap       == -1)
+    {
+        cout << "Fehler: " << web_response << endl;
+        return 2;
+    }
 
-	if (wo_ist_GetProcessListResponse == - 1 && wo_ist_exitcode_null == - 1 && wo_ist_GetAlertsResponse == - 1 && wo_ist_GetAlertTreeResponse == - 1 && wo_ist_J2EEGetProcessListResponse == - 1 && wo_ist_J2EEGetComponentListResponse == - 1 && wo_ist_J2EEGetVMHeapInfoResponse == - 1)
-		{
-			
-			
-			
-			
-			cout<<"Fehler: ";
-			cout<<web_service_wert_rueckgabe<<endl;
-			icinga_retun_code = 2;
-			exit(icinga_retun_code);
-		}
+    if (wo_ist_sapcontrol_response == -1) return -1;
 
-	
-	
-	if(wo_ist_sapcontrol_response_abschnitt > -1)
-	{
-		
-		string sapcontrol_command_response;
-		sapcontrol_command_response = web_service_wert_rueckgabe.substr(wo_ist_sapcontrol_response_abschnitt, web_service_wert_rueckgabe.length());
-		
-		
-		wo_ist_sapcontrol_response_abschnitt = - 1;
-		wo_ist_sapcontrol_response_abschnitt = sapcontrol_command_response.find(">");
-		
-		sapcontrol_command_response = sapcontrol_command_response.substr(11,wo_ist_sapcontrol_response_abschnitt - 11);
-		
-		
-		
-		
-		
-		
-		
+    string cmd_resp = web_response.substr(wo_ist_sapcontrol_response, web_response.length());
+    int gt_pos = cmd_resp.find(">");
+    cmd_resp = cmd_resp.substr(11, gt_pos - 11);
 
-		int wo_ist_gleich = - 1;
-		wo_ist_gleich = sapcontrol_monitor_name_extern.find("=");
-		sapcontrol_monitor_name_extern = sapcontrol_monitor_name_extern.substr(wo_ist_gleich + 1,sapcontrol_monitor_name_extern.length());
-		
-		
-		int item_gefunden = - 1 ;
-		int intem_status_gray = - 1;
-		int intem_status_red = - 1;
-		int intem_status_yellow = - 1;
-		int intem_status_green = - 1;
-		
-		bool name_gefunden =  false;			
-		bool object_gefunden =  false;			
+    int item_gefunden      = -1;
+    int status_gray        = -1;
+    int status_red         = -1;
+    int status_yellow      = -1;
+    int status_green       = -1;
+    bool name_gefunden     = false;
+    bool object_gefunden   = false;
+    int retcode            = -1;
 
-		if (sapcontrol_command_response == "GetProcessListResponse" )
-		{
-			
-			BOOST_FOREACH (boost::property_tree::ptree::value_type &wert_typ,pt.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:GetProcessListResponse.process")) 
-			{
-				if (wert_typ.first == "item") 
-				{
-					auto name = wert_typ.second.get<std::string>("name");
-					auto textstatus = wert_typ.second.get<std::string>("textstatus");
-					auto dispstatus = wert_typ.second.get<std::string>("dispstatus");
+    if (cmd_resp == "GetProcessListResponse") {
+        BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
+            ptree.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:GetProcessListResponse.process"))
+        {
+            if (v.first != "item") { cout << "skipped: '" << v.first << "'\n"; continue; }
 
-					item_gefunden = - 1;
-					item_gefunden = name.find(sapcontrol_monitor_name_extern);
-					
-					
-					
-					
-					if (item_gefunden > - 1)			
-					{
-						
-						name_gefunden = true;						
-						
-						cout<<name;
-					
-						intem_status_gray = - 1;
-						intem_status_gray = dispstatus.find("SAPControl-GRAY");
-						
-						if (intem_status_gray > -1)
-						{
-							cout<<" | GRAY ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 2;
-							break;
-						}
+            auto name       = v.second.get<string>("name");
+            auto textstatus = v.second.get<string>("textstatus");
+            auto dispstatus = v.second.get<string>("dispstatus");
 
-						intem_status_red = - 1;
-						intem_status_red = dispstatus.find("SAPControl-RED");
-						
-						if (intem_status_red > -1)
-						{
-							cout<<" | RED ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 2;
-							break;
-						}
+            if (name.find(p.monitor) == string::npos) continue;
+            name_gefunden = true;
+            cout << name;
 
-						intem_status_yellow = - 1;
-						intem_status_yellow = dispstatus.find("SAPControl-YELLOW");
-						
-						if (intem_status_yellow > -1)
-						{
-							cout<<" | YELLOW ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 1;
-							break;
-						}
+            if (dispstatus.find("SAPControl-GRAY")   != string::npos) { cout << " | GRAY | "   << textstatus << endl; retcode = 2; break; }
+            if (dispstatus.find("SAPControl-RED")    != string::npos) { cout << " | RED | "    << textstatus << endl; retcode = 2; break; }
+            if (dispstatus.find("SAPControl-YELLOW") != string::npos) { cout << " | YELLOW | " << textstatus << endl; retcode = 1; break; }
+            if (dispstatus.find("SAPControl-GREEN")  != string::npos) { cout << " | GREEN | "  << textstatus << endl; retcode = 0; break; }
+            break;
+        }
+        if (!name_gefunden) {
+            cout << "Prozess: " << p.monitor << " nicht gefunden" << endl;
+            cout << "SAP System gestoppt" << endl;
+            retcode = 2;
+        }
+    }
 
-						intem_status_green = - 1;
-						intem_status_green = dispstatus.find("SAPControl-GREEN");
-						
-						if (intem_status_green > -1)
-						{
-							cout<<" | GREEN ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 0;
-							break;
-						}				
-											
+    if (cmd_resp == "GetAlertsResponse") {
+        BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
+            ptree.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:GetAlertsResponse.alert"))
+        {
+            if (v.first != "item") { cout << "skipped: '" << v.first << "'\n"; continue; }
 
-						intem_status_gray = - 1;
-						intem_status_red = - 1;
-						intem_status_yellow = - 1;
-						intem_status_green = - 1;
+            auto name       = v.second.get<string>("Object");
+            auto textstatus = v.second.get<string>("Description");
+            auto dispstatus = v.second.get<string>("Value");
 
-						break;
-					}
-					
-					
-					
-					
-					
-					
-					
-					
-					
-				}
-				else
-				{
-					std::cout << "skipped: '" << wert_typ.first << "'\n";
-				}
+            if (name.find(p.monitor) == string::npos) continue;
+            object_gefunden = true;
+            cout << name;
 
-			}
-			
-			if (name_gefunden == false)
-			{
-				cout<<"Prozess: "<<sapcontrol_monitor_name_extern<<" nicht gefunden"<<endl;
-				cout<<"SAP System gestoppt"<<endl;
-				icinga_retun_code = 2;
-			}			
-		}
+            if (dispstatus.find("SAPControl-GRAY")   != string::npos) { cout << " | GRAY | "   << textstatus << endl; retcode = 2; break; }
+            if (dispstatus.find("SAPControl-RED")    != string::npos) { cout << " | RED | "    << textstatus << endl; retcode = 2; break; }
+            if (dispstatus.find("SAPControl-YELLOW") != string::npos) { cout << " | YELLOW | " << textstatus << endl; retcode = 1; break; }
+            if (dispstatus.find("SAPControl-GREEN")  != string::npos) { cout << " | GREEN | "  << textstatus << endl; retcode = 0; break; }
+            break;
+        }
+        if (!object_gefunden) {
+            cout << "Monitor: '" << p.monitor << "' nicht gefunden" << endl;
+            retcode = 2;
+        }
+    }
 
+    if (cmd_resp == "OSExecuteResponse") {
+        string buf = web_response;
+        string cert_subject;
+        string cert_valid_until;
 
+        regex rx_getname("^get_my_name ");
+        regex rx_maintain("^maintain_pk -l ");
 
-		if (sapcontrol_command_response == "GetAlertsResponse" )
-		{
-			
-			BOOST_FOREACH (boost::property_tree::ptree::value_type &wert_typ,pt.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:GetAlertsResponse.alert")) 
-			{
-				if (wert_typ.first == "item") 
-				{
-					auto name = wert_typ.second.get<std::string>("Object");
-					auto textstatus = wert_typ.second.get<std::string>("Description");
-					auto dispstatus = wert_typ.second.get<std::string>("Value");
-					
-					
-					
+        if (regex_search(p.sapgenpse, reg_match, rx_getname)) {
+            bool running = true;
+            while (running) {
+                int anfang = buf.find("<item>");
+                int ende   = buf.find("</item>");
+                string item;
+                try { item = buf.substr(anfang + 6, ende - anfang); }
+                catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }
+                try { buf  = buf.substr(ende + 7, buf.length()); }
+                catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }
 
+                if (regex_search(item, reg_match, regex("^Subject               :"))) {
+                    cert_subject = item.substr(0, item.length() - 6);
+                    cert_subject = cert_subject.substr(cert_subject.find(":") + 4);
+                }
+                if (regex_search(item, reg_match, regex("^             NotAfter :"))) {
+                    cert_valid_until = item.substr(0, item.length() - 6);
+                    cert_valid_until = cert_valid_until.substr(cert_valid_until.find(":") + 4);
+                    running = false;
+                }
+            }
+        }
 
-					item_gefunden = - 1;
-					item_gefunden = name.find(sapcontrol_monitor_name_extern);
-					
-					
-					
-					if (item_gefunden > -1)			
-					{
-						object_gefunden =  true;
-						
-						
-						
-						
-						
-						cout<<name;
-					
-						intem_status_gray = - 1;
-						intem_status_gray = dispstatus.find("SAPControl-GRAY");
-						
-						if (intem_status_gray > -1)
-						{
-							cout<<" | GRAY ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 2;
-							break;
-						}
+        if (regex_search(p.sapgenpse, reg_match, rx_maintain)) {
+            bool running = true;
+            while (running) {
+                int anfang = buf.find("<item>");
+                int ende   = buf.find("</item>");
+                string item;
+                try { item = buf.substr(anfang + 6, ende - anfang); }
+                catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }
+                try { buf  = buf.substr(ende + 7, buf.length()); }
+                catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }
 
-						intem_status_red = - 1;
-						intem_status_red = dispstatus.find("SAPControl-RED");
-						
-						if (intem_status_red > -1)
-						{
-							cout<<" | RED ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 2;
-							break;
-						}
+                if (regex_search(item, reg_match, regex("^  Subject:"))) {
+                    cert_subject = item.substr(0, item.length() - 6);
+                    cert_subject = cert_subject.substr(cert_subject.find(":") + 31);
+                }
+                if (regex_search(item, reg_match, regex("^  Validity not after:"))) {
+                    cert_valid_until = item.substr(0, item.length() - 6);
+                    cert_valid_until = cert_valid_until.substr(cert_valid_until.find(":") + 20);
+                    certlist.push_back(cert_subject + " Validity not after: " + cert_valid_until);
+                }
+                if (regex_search(item, reg_match, regex("^</item$")))
+                    running = false;
+            }
+        }
+    }
 
-						intem_status_yellow = - 1;
-						intem_status_yellow = dispstatus.find("SAPControl-YELLOW");
-						
-						if (intem_status_yellow > -1)
-						{
-							cout<<" | YELLOW ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 1;
-							break;
-						}
+    if (cmd_resp == "J2EEGetProcessListResponse") {
+        BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
+            ptree.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:J2EEGetProcessListResponse.process"))
+        {
+            if (v.first != "item") { cout << "skipped: '" << v.first << "'\n"; continue; }
 
-						intem_status_green = - 1;
-						intem_status_green = dispstatus.find("SAPControl-GREEN");
-						
-						if (intem_status_green > -1)
-						{
-							cout<<" | GREEN ";
-							
-							cout<<" | "<<textstatus<<endl;
-							
-							icinga_retun_code = 0;
-							break;
-						}				
-											
+            auto name      = v.second.get<string>("name");
+            auto statetext = v.second.get<string>("statetext");
 
-						intem_status_gray = - 1;
-						intem_status_red = - 1;
-						intem_status_yellow = - 1;
-						intem_status_green = - 1;
+            if (name.find(p.monitor) == string::npos) continue;
+            name_gefunden = true;
 
-						break;
-					}
-					
-					
-				}
-				else
-				{
-					std::cout << "skipped: '" << wert_typ.first << "'\n";
-				}
-			}
-			if (object_gefunden == false)
-			{
-				cout<<"Monitor: \'"<<sapcontrol_monitor_name_extern<<"\' nicht gefunden"<<endl;
-				
-				icinga_retun_code = 2;
-			}	
-		}
+            if (statetext.find("Disabled") != string::npos) { cout << " | GRAY | "  << statetext << endl; retcode = 2; break; }
+            if (statetext.find("Running")  != string::npos) { cout << " | GREEN | " << statetext << endl; retcode = 0; break; }
+            break;
+        }
+    }
 
-		
+    if (cmd_resp == "J2EEGetComponentListResponse") {
+        BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
+            ptree.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:J2EEGetComponentListResponse.component"))
+        {
+            if (v.first != "item") { cout << "skipped: '" << v.first << "'\n"; continue; }
 
+            auto name   = v.second.get<string>("name");
+            auto status = v.second.get<string>("status");
 
-		if (sapcontrol_command_response == "OSExecuteResponse" )
-		{
-			
-			
-			
-			
-			int wo_ist_item_anfang = - 1;
-			int wo_ist_item_ende = - 1;
-			
-			string item_wert ;
-			
-			bool anzeige = false;
-			
-			
+            if (name.find(p.monitor) == string::npos) continue;
+            name_gefunden = true;
 
-			std::regex regex_3("^maintain_pk -l $");
-			std::regex regex_4("^get_my_name $");
+            if (status.find("stopped") != string::npos) { cout << " | GRAY | "  << status << endl; retcode = 2; break; }
+            if (status.find("running") != string::npos) { cout << " | GREEN | " << status << endl; retcode = 0; break; }
+            break;
+        }
+    }
 
-			
-			if (std::regex_search(sapgenpse_parameter, reg_match, regex_4))
-			{
-				bool weil_tru = true;
-				while(weil_tru)
-				{			
-					wo_ist_item_anfang = web_service_wert_rueckgabe.find("<item>");
-					wo_ist_item_ende = web_service_wert_rueckgabe.find("</item>");
-					
-					try{item_wert = web_service_wert_rueckgabe.substr(wo_ist_item_anfang + 6,wo_ist_item_ende - wo_ist_item_anfang );}catch( std::out_of_range& exception ){cout<<"Error xml_extract.cpp std::out_of_range"<<endl;exit(0);}
-					
-					
-					try{web_service_wert_rueckgabe = web_service_wert_rueckgabe.substr(wo_ist_item_ende + 7, web_service_wert_rueckgabe.length());}catch( std::out_of_range& exception ){cout<<"Error xml_extract.cpp std::out_of_range"<<endl;exit(0);}
-					
-					
-					
-					
-					std::regex regex_1("^Subject               :");
-					if (std::regex_search(item_wert, reg_match, regex_1))
-					{
-						
-						
-						cert_subject = item_wert.substr(0,item_wert.length() - 6);
-						wo_ist_gleich = - 1;
-						wo_ist_gleich = cert_subject.find(":");
-						cert_subject = cert_subject.substr(wo_ist_gleich + 4,cert_subject.length());
-						
-						
-						
-						
-					}
-					std::regex regex_2("^             NotAfter :");
-					if (std::regex_search(item_wert, reg_match, regex_2))
-					{
-						
-						cert_valud_until = item_wert.substr(0,item_wert.length() - 6);
-						wo_ist_gleich = - 1;
-						wo_ist_gleich = cert_valud_until.find(":");
-						cert_valud_until = cert_valud_until.substr(wo_ist_gleich + 4,cert_valud_until.length());
-						
-						
-						weil_tru = false;
-						continue;
-					}
-				}
-			}
-			
-			if (std::regex_search(sapgenpse_parameter, reg_match, regex_3))
-			{
-				
-				bool weil_tru = true;
-				while(weil_tru)
-				{
-					wo_ist_item_anfang = web_service_wert_rueckgabe.find("<item>");
-					wo_ist_item_ende = web_service_wert_rueckgabe.find("</item>");
-					
-					try{item_wert = web_service_wert_rueckgabe.substr(wo_ist_item_anfang + 6,wo_ist_item_ende - wo_ist_item_anfang );}catch( std::out_of_range& exception ){cout<<"Error xml_extract.cpp std::out_of_range"<<endl;exit(0);}
-					
-					
-					try{web_service_wert_rueckgabe = web_service_wert_rueckgabe.substr(wo_ist_item_ende + 7, web_service_wert_rueckgabe.length());}catch( std::out_of_range& exception ){cout<<"Error xml_extract.cpp std::out_of_range"<<endl;exit(0);}
-					
-					
-					
-					std::regex regex_5("^  Subject:");
-					if (std::regex_search(item_wert, reg_match, regex_5))
-					{
-						
-						
-						cert_subject = item_wert.substr(0,item_wert.length() - 6);
-						wo_ist_gleich = - 1;
-						wo_ist_gleich = cert_subject.find(":");
-						cert_subject = cert_subject.substr(wo_ist_gleich + 31,cert_subject.length());
-						
-						
-						
-						
-					}
-					std::regex regex_6("^  Validity not after:");
-					if (std::regex_search(item_wert, reg_match, regex_6))
-					{
-						
-						cert_valud_until = item_wert.substr(0,item_wert.length() - 6);
-						wo_ist_gleich = - 1;
-						wo_ist_gleich = cert_valud_until.find(":");
-						cert_valud_until = cert_valud_until.substr(wo_ist_gleich + 20,cert_valud_until.length());
-						
-						
-						
-						
-						
-						
-						certlist_array.push_back(cert_subject + " Validity not after: " + cert_valud_until) ;
-						
-					}
-					std::regex regex_7("^</item$");
-					if (std::regex_search(item_wert, reg_match, regex_7))
-					{
-						
-						weil_tru = false;
-						continue;
-					}
-				}
-			}
-		}
+    if (cmd_resp == "J2EEGetVMHeapInfoResponse") {
+        BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
+            ptree.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:J2EEGetVMHeapInfoResponse.heap"))
+        {
+            if (v.first != "item") { cout << "skipped: '" << v.first << "'\n"; continue; }
 
+            auto processname = v.second.get<string>("processname");
+            auto vtype       = v.second.get<string>("type");
+            auto size        = v.second.get<string>("size");
 
+            if (processname.find(p.monitor) != string::npos && vtype.find(type) != string::npos) {
+                cout << size << endl;
+                retcode = 0;
+            }
+        }
+    }
 
-
-		
-
-		if (sapcontrol_command_response == "J2EEGetProcessListResponse" )
-		{
-			
-			
-			BOOST_FOREACH (boost::property_tree::ptree::value_type &wert_typ,pt.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:J2EEGetProcessListResponse.process")) 
-			{
-				if (wert_typ.first == "item") 
-				{
-					auto name = wert_typ.second.get<std::string>("name");
-					auto state = wert_typ.second.get<std::string>("state");
-					auto statetext = wert_typ.second.get<std::string>("statetext");
-					
-					
-					
-					
-					item_gefunden = - 1;
-					item_gefunden = name.find(sapcontrol_monitor_name_extern);
-					if (item_gefunden > - 1)			
-					{
-						
-						name_gefunden = true;						
-						
-						
-						
-						intem_status_gray = - 1;
-						intem_status_gray = statetext.find("Disabled");
-						
-						if (intem_status_gray > -1)
-						{
-							cout<<" | GRAY ";
-							cout<<" | "<<statetext<<endl;
-							
-							
-							
-							icinga_retun_code = 2;
-							break;
-						}
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						intem_status_green = - 1;
-						intem_status_green = statetext.find("Running");
-						
-						if (intem_status_green > -1)
-						{
-							cout<<" | GREEN ";
-							cout<<" | "<<statetext<<endl;
-							
-							
-							
-							icinga_retun_code = 0;
-							break;
-						}	
-						
-						intem_status_gray = - 1;
-						intem_status_red = - 1;
-						intem_status_yellow = - 1;
-						intem_status_green = - 1;
-						
-					}
-					
-				}
-				else
-				{
-					std::cout << "skipped: '" << wert_typ.first << "'\n";
-				}
-			}
-		}
-			
-
-		if (sapcontrol_command_response == "J2EEGetComponentListResponse" )
-		{
-			
-			BOOST_FOREACH (boost::property_tree::ptree::value_type &wert_typ,pt.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:J2EEGetComponentListResponse.component")) 
-			{
-				if (wert_typ.first == "item") 
-				{
-					auto name = wert_typ.second.get<std::string>("name");
-					auto status = wert_typ.second.get<std::string>("status");
-					auto dispstatus = wert_typ.second.get<std::string>("dispstatus");
-					
-					
-					
-					
-					
-					item_gefunden = - 1;
-					item_gefunden = name.find(sapcontrol_monitor_name_extern);
-					if (item_gefunden > - 1)			
-					{
-						
-						name_gefunden = true;						
-						
-						
-					
-					
-						intem_status_gray = - 1;
-						intem_status_gray = status.find("stopped");
-						
-						if (intem_status_gray > -1)
-						{
-							cout<<" | GRAY ";
-							cout<<" | "<<status<<endl;
-							
-							
-							
-							icinga_retun_code = 2;
-							break;
-						}
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						
-						intem_status_green = - 1;
-						intem_status_green = status.find("running");
-						
-						if (intem_status_green > -1)
-						{
-							cout<<" | GREEN ";
-							cout<<" | "<<status<<endl;
-							
-							
-							
-							icinga_retun_code = 0;
-							break;
-						}
-						
-						intem_status_gray = - 1;
-						intem_status_red = - 1;
-						intem_status_yellow = - 1;
-						intem_status_green = - 1;
-					}
-				}
-				else
-				{
-					std::cout << "skipped: '" << wert_typ.first << "'\n";
-				}
-			}
-		}
-
-		if (sapcontrol_command_response == "J2EEGetVMHeapInfoResponse" )
-		{
-			
-			
-			int type_gefunden = - 1;
-			
-			int item_gefunden_processname = - 1;
-			int item_gefunden_type = - 1;
-					
-			BOOST_FOREACH (boost::property_tree::ptree::value_type &wert_typ,pt.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:J2EEGetVMHeapInfoResponse.heap")) 
-			{
-				if (wert_typ.first == "item") 
-				{
-					auto processname = wert_typ.second.get<std::string>("processname");
-					auto type = wert_typ.second.get<std::string>("type");
-					auto size = wert_typ.second.get<std::string>("size");
-					auto dispstatus = wert_typ.second.get<std::string>("dispstatus");
-					
-					
-					
-					
-					
-					
-					
-					
-					item_gefunden_processname = - 1;
-					item_gefunden_type = - 1;
-					item_gefunden_processname = processname.find(sapcontrol_monitor_name_extern);
-					item_gefunden_type = type.find(type_extern);
-					
-					if (item_gefunden_processname > - 1 && item_gefunden_type > - 1)			
-					{
-						
-						
-						
-						
-						heap_memory_size = size;
-						
-					}
-					
-					
-					
-					
-				}
-				else
-				{
-					std::cout << "skipped: '" << wert_typ.first << "'\n";
-				}
-			}
-		}
-
-	}
-	
-	
-	
-	
-	
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	
+    return retcode;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
