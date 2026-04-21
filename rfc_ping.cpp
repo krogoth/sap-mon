@@ -31,7 +31,8 @@ int rfc_ping(const CliParams& p, string& out_message)
     RFC_FUNCTION_HANDLE rfc_handle;
 
     ccms_bapi_handle = RfcGetFunctionDesc(conn, cU("/BDL/RFC_CHECK"), &errorInfo);
-    rfc_handle       = RfcCreateFunction(ccms_bapi_handle, &errorInfo);
+    if (!ccms_bapi_handle) { out_message = "RfcGetFunctionDesc /BDL/RFC_CHECK failed"; return 2; }
+    rfc_handle = RfcCreateFunction(ccms_bapi_handle, &errorInfo);
 
     auto uc_dest = utf8ToSapUc(p.rfc_dest, errorInfo);
     RfcSetChars(rfc_handle, cU("DESTINATION"), uc_dest.get(), strlenU(uc_dest.get()), &errorInfo);
@@ -52,7 +53,8 @@ int rfc_ping(const CliParams& p, string& out_message)
 
         if (error_msg.find("Illegal destination type 'G'.") != string::npos) {
             ccms_bapi_handle = RfcGetFunctionDesc(conn, cU("/SDF/HTTP_CHECK"), &errorInfo);
-            rfc_handle       = RfcCreateFunction(ccms_bapi_handle, &errorInfo);
+            if (!ccms_bapi_handle) { out_message = "RfcGetFunctionDesc /SDF/HTTP_CHECK failed"; return 2; }
+            rfc_handle = RfcCreateFunction(ccms_bapi_handle, &errorInfo);
 
             RfcSetChars(rfc_handle, cU("IV_DESTINATION"), uc_dest.get(), strlenU(uc_dest.get()), &errorInfo);
             RfcSetChars(rfc_handle, cU("IV_PING"), cU("X"), 1, &errorInfo);
@@ -78,6 +80,6 @@ int rfc_ping(const CliParams& p, string& out_message)
         retcode = 0;
 
     RfcDestroyFunction(rfc_handle, &errorInfo);
-    RfcCloseConnection(conn, NULL);
+    RfcCloseConnection(conn, &errorInfo);
     return retcode;
 }

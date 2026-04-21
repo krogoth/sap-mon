@@ -75,7 +75,8 @@ void checkConnection(RFC_CONNECTION_HANDLE conn, const RFC_ERROR_INFO& errInfo) 
  * @param iface "XAL" ou "XBP"
  */
 void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& errInfo) {
-    auto bapi   = RfcGetFunctionDesc(conn, cU("BAPI_XMI_LOGON"), &errInfo);
+    auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_XMI_LOGON"), &errInfo);
+    if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_XMI_LOGON failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
     RfcSetChars(handle, cU("EXTCOMPANY"), cU("TESTCOMPANY"), 11, &errInfo);
     RfcSetChars(handle, cU("EXTPRODUCT"), cU("TESTPRODUKT"), 11, &errInfo);
@@ -105,7 +106,8 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_IN
 
     xmiLogon(conn, "XAL", errInfo);
 
-    auto bapi   = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
+    auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
+    if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETLIST failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
     RfcSetChars(handle, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
     RfcInvoke(conn, handle, &errInfo);
@@ -122,13 +124,14 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_IN
     RFC_STRUCTURE_HANDLE returnStructure;
 
     for (unsigned i = 0; i < rowCount; ++i) {
-        RfcMoveTo(table, i, nullptr);
+        RfcMoveTo(table, i, &errInfo);
         RfcGetString(table, cU("MS_NAME"),   ms_name,   sizeofU(ms_name),   nullptr, &errInfo);
         printfU(cU("%s\n"), ms_name);
         RfcGetString(table, cU("MONI_NAME"), moni_name, sizeofU(moni_name), nullptr, &errInfo);
         printfU(cU(" |\n  -> %s\n"), moni_name);
 
-        auto bapi2   = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
+        auto bapi2 = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
+        if (!bapi2) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETTREE failed");
         auto handle2 = RfcCreateFunction(bapi2, &errInfo);
 
         RfcSetInt(handle2,  cU("MAX_TREE_DEPTH"),     0, &errInfo);
@@ -148,7 +151,7 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_IN
         RfcGetRowCount(table2, &rowCount2, &errInfo);
 
         for (unsigned j = 0; j < rowCount2; ++j) {
-            RfcMoveTo(table2, j, nullptr);
+            RfcMoveTo(table2, j, &errInfo);
             RfcGetString(table2, cU("CUSGRPNAME"), object_name, sizeofU(object_name), nullptr, &errInfo);
             printfU(cU(" \t| -> %s\n"), object_name);
             RfcGetString(table2, cU("OBJECTNAME"), object_name, sizeofU(object_name), nullptr, &errInfo);
@@ -174,7 +177,8 @@ static string resolveMtClass(
     RFC_STRUCTURE_HANDLE& outTid,   // [out] structure TID pour appels suivants
     RFC_ERROR_INFO& errInfo)
 {
-    auto bapi   = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MTE_GETTIDBYNAME"), &errInfo);
+    auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MTE_GETTIDBYNAME"), &errInfo);
+    if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MTE_GETTIDBYNAME failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
 
     RfcSetChars(handle, cU("CONTEXT_NAME"),       context_name, strlenU(context_name), &errInfo);
@@ -192,7 +196,7 @@ static string resolveMtClass(
     string mtclass = sapUcToUtf8(message_mtclass, errInfo);
     if (mtclass.size() > 3) mtclass = mtclass.substr(0, 3);
 
-    RfcDestroyFunction(handle, errInfo.code == RFC_OK ? &errInfo : nullptr);
+    RfcDestroyFunction(handle, &errInfo);
     return mtclass;
 }
 
@@ -225,9 +229,10 @@ static string readMteValue(
     auto it = dispatch.find(mtclass);
     if (it == dispatch.end()) return {};
 
-    const auto& cfg  = it->second;
-    auto bapi        = RfcGetFunctionDesc(conn, cfg.bapi_name, &errInfo);
-    auto handle      = RfcCreateFunction(bapi, &errInfo);
+    const auto& cfg = it->second;
+    auto bapi = RfcGetFunctionDesc(conn, cfg.bapi_name, &errInfo);
+    if (!bapi) return {};
+    auto handle = RfcCreateFunction(bapi, &errInfo);
 
     RfcSetChars(handle, cU("EXTERNAL_USER_NAME"), cU("External_User_Name_nonsens"), 26, &errInfo);
     RfcSetStructure(handle, cU("TID"), tid, &errInfo);
@@ -291,7 +296,7 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
     string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo);
 
     if (value.empty()) {
-        RfcCloseConnection(conn, nullptr);
+        RfcCloseConnection(conn, &errInfo);
         exit(-1);
     }
 
@@ -333,7 +338,8 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
     auto uc_ms   = utf8ToSapUc(ms_name_s,  errInfo);
     auto uc_moni = utf8ToSapUc(moni_name_s, errInfo);
 
-    auto bapi   = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
+    auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
+    if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETTREE failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
 
     RfcSetChars(handle, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
@@ -359,7 +365,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
     SAP_UC message[8192]      = iU("");
 
     for (unsigned i = 0; i < rowCount; ++i) {
-        RfcMoveTo(table, i, nullptr);
+        RfcMoveTo(table, i, &errInfo);
         RfcGetString(table, cU("MTSYSID"),   system_id,   sizeofU(system_id),   nullptr, &errInfo);
         RfcGetString(table, cU("MTMCNAME"),  context_name,sizeofU(context_name),nullptr, &errInfo);
         RfcGetString(table, cU("OBJECTNAME"),object_name, sizeofU(object_name), nullptr, &errInfo);
@@ -386,7 +392,8 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
     xmiLogon(conn, "XBP", errInfo);
 
-    auto bapi   = RfcGetFunctionDesc(conn, cU("BAPI_XBP_JOB_SELECT"), &errInfo);
+    auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_XBP_JOB_SELECT"), &errInfo);
+    if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_XBP_JOB_SELECT failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
     RfcSetChars(handle, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
 
@@ -421,7 +428,7 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
     vector<string> job_name_und_job_count_array;
 
     for (unsigned i = 0; i < rowCount; ++i) {
-        RfcMoveTo(table, i, nullptr);
+        RfcMoveTo(table, i, &errInfo);
         RfcGetString(table, cU("JOBNAME"),  job_name,      sizeofU(job_name),      nullptr, &errInfo);
         RfcGetString(table, cU("JOBCOUNT"), job_count,     sizeofU(job_count),     nullptr, &errInfo);
         RfcGetString(table, cU("STATUS"),   job_status,    sizeofU(job_status),    nullptr, &errInfo);
@@ -441,7 +448,7 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
         );
     }
     RfcDestroyFunction(handle, &errInfo);
-    RfcCloseConnection(conn, nullptr);
+    RfcCloseConnection(conn, &errInfo);
 
     // --- Logique de déduplication (inchangée) ---
     vector<string> job_name_array_3;
@@ -507,7 +514,8 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
 int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_INFO& errInfo) {
     xmiLogon(conn, "XBP", errInfo);
 
-    auto bapi   = RfcGetFunctionDesc(conn, cU("/SDF/GET_DUMP_LOG"), &errInfo);
+    auto bapi = RfcGetFunctionDesc(conn, cU("/SDF/GET_DUMP_LOG"), &errInfo);
+    if (!bapi) throw std::runtime_error("RfcGetFunctionDesc /SDF/GET_DUMP_LOG failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
 
     RfcSetChars(handle, cU("DATE_FROM"), cU("1900-01-01"), 10, &errInfo);
@@ -533,7 +541,7 @@ int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERR
     unsigned limit = min(rowCount, 3u);
 
     for (unsigned i = 0; i < limit; ++i) {
-        RfcMoveTo(table, i, nullptr);
+        RfcMoveTo(table, i, &errInfo);
         DumpEntry e;
         e.date     = readField(table, cU("E2E_DATE"));
         e.time     = readField(table, cU("E2E_TIME"));
@@ -552,7 +560,7 @@ int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERR
     }
 
     RfcDestroyFunction(handle, &errInfo);
-    RfcCloseConnection(conn, nullptr);
+    RfcCloseConnection(conn, &errInfo);
 
     // Load previous snapshot into a set for O(n) diff
     set<string> prev_snapshot;
@@ -948,11 +956,11 @@ int mainU(int argc, SAP_UC** argv) {
         ret = it->second(conn, p, g_errorInfo);
     } catch (const exception& e) {
         cerr << "Handler error: " << e.what() << endl;
-        if (conn) RfcCloseConnection(conn, nullptr);
+        if (conn) RfcCloseConnection(conn, &g_errorInfo);
         return -1;
     }
 
-    if (conn) RfcCloseConnection(conn, nullptr);
+    if (conn) RfcCloseConnection(conn, &g_errorInfo);
     curl_global_cleanup();
     return ret;
 }

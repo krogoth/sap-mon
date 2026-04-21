@@ -27,7 +27,12 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
     }
 
     RFC_FUNCTION_DESC_HANDLE ccms_bapi_handle = RfcGetFunctionDesc(conn, cU("SSFP_GET_PSEINFO"), &errorInfo);
-    RFC_FUNCTION_HANDLE rfc_handle            = RfcCreateFunction(ccms_bapi_handle, &errorInfo);
+    if (!ccms_bapi_handle) {
+        cerr << "ssfp_get_pseinfo: RfcGetFunctionDesc SSFP_GET_PSEINFO failed" << endl;
+        RfcCloseConnection(conn, &errorInfo);
+        return {};
+    }
+    RFC_FUNCTION_HANDLE rfc_handle = RfcCreateFunction(ccms_bapi_handle, &errorInfo);
 
     vector<string> context_list = {
         "PROG", "PROG", "SMIM", "SFA",  "SSFA", "SSFA",
@@ -67,6 +72,6 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
     }
 
     RfcDestroyFunction(rfc_handle, &errorInfo);
-    RfcCloseConnection(conn, NULL);
+    RfcCloseConnection(conn, &errorInfo);
     return certlist;
 }
