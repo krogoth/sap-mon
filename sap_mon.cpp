@@ -42,7 +42,6 @@ vector<string> read_cert_infos(const vector<string>& certlist, bool ssl_check);
 string         sapcontrol_commands(const CliParams& p);
 string         web_srv(const CliParams& p, const string& soap_xml);
 int            xml_extract(const string& web_response, const CliParams& p, vector<string>& certlist);
-long           time_converter(const string& cert_valud_until);
 
 // =============================================================================
 // SECTION 2 — Process-wide RFC state (not function I/O)
@@ -60,7 +59,7 @@ RFC_RC          g_rc = RFC_OK;
 /**
  * checkConnection — affiche l'erreur et exit si la connexion a échoué.
  */
-void checkConnection(RFC_CONNECTION_HANDLE conn, RFC_ERROR_INFO& errInfo) {
+void checkConnection(RFC_CONNECTION_HANDLE conn, const RFC_ERROR_INFO& errInfo) {
     if (errInfo.code != RFC_OK) {
         cout << "Login PROBLEM" << endl;
         // Correction bug original : format string cohérent
@@ -78,7 +77,7 @@ void checkConnection(RFC_CONNECTION_HANDLE conn, RFC_ERROR_INFO& errInfo) {
 void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& errInfo) {
     auto bapi   = RfcGetFunctionDesc(conn, cU("BAPI_XMI_LOGON"), &errInfo);
     auto handle = RfcCreateFunction(bapi, &errInfo);
-    RfcSetChars(handle, cU("EXTCOMPANY"), cU("TESTCOPMANY"), 11, &errInfo);
+    RfcSetChars(handle, cU("EXTCOMPANY"), cU("TESTCOMPANY"), 11, &errInfo);
     RfcSetChars(handle, cU("EXTPRODUCT"), cU("TESTPRODUKT"), 11, &errInfo);
 
     // cU() est une macro compile-time — dispatch explicite sur les deux valeurs possibles
@@ -119,7 +118,6 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_IN
     SAP_UC ms_name[4096]   = iU("");
     SAP_UC moni_name[4096] = iU("");
     SAP_UC object_name[4096] = iU("");
-    unsigned resultLen = 0;
 
     RFC_STRUCTURE_HANDLE returnStructure;
 
@@ -263,15 +261,6 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
 
     // Parsing du monitor path : SID\ContextName\...\ObjectName\MteName
     const string& monitor_name = p.monitor;
-
-    auto nth_backslash = [&](int n) -> size_t {
-        size_t pos = 0;
-        for (int i = 0; i < n; ++i) {
-            pos = monitor_name.find('\\', pos + (i > 0 ? 1 : 0));
-            if (pos == string::npos) return string::npos;
-        }
-        return pos;
-    };
 
     size_t bs1  = monitor_name.find('\\');
     size_t bs2  = (bs1  != string::npos) ? monitor_name.find('\\', bs1  + 1) : string::npos;
@@ -461,14 +450,8 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
     for (size_t j = 0; j < job_name_und_job_count_array.size(); ++j) {
         size_t wo = job_name_und_job_count_array[j].find(";;");
         string job_name_temp = job_name_und_job_count_array[j].substr(0, wo);
-
-        if (job_name_temp.compare(job_name_temp_2) == 0) continue;
-
+        if (job_name_temp == job_name_temp_2) continue;
         job_name_array_3.push_back(job_name_temp);
-        if (job_name_und_job_count_array.size() == 0) {
-            job_name_temp_2 = job_name_temp;
-            continue;
-        }
         job_name_temp_2 = job_name_temp;
     }
 
@@ -660,9 +643,9 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
         long tage_warn     = stol(p.warn);
         long tage_critical = stol(p.critical);
 
-        if (tage >= tage_warn)                           { cout << "OK - "       << tage << endl; return 0; }
-        if (tage <= tage_warn && tage >= tage_critical)  { cout << "WARNING - "  << tage << endl; return 1; }
-        if (tage <= tage_critical)                        { cout << "CRITICAL - " << tage << endl; return 2; }
+        if (tage >= tage_warn)     { cout << "OK - "       << tage << endl; return 0; }
+        if (tage >= tage_critical) { cout << "WARNING - "  << tage << endl; return 1; }
+                                   { cout << "CRITICAL - " << tage << endl; return 2; }
     }
     return 0;
 }

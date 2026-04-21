@@ -55,6 +55,8 @@ string web_srv(const CliParams& p, const string& soap_xml)
         CURLcode rc = curl_easy_perform(curl);
         if (rc != CURLE_OK) {
             cout << "Fehler #" << curl_easy_strerror(rc) << "#" << endl;
+            curl_easy_cleanup(curl);
+            curl_slist_free_all(header);
             exit(1);
         }
     }
@@ -78,6 +80,8 @@ string web_srv(const CliParams& p, const string& soap_xml)
         CURLcode rc = curl_easy_perform(curl);
         if (rc != CURLE_OK) {
             cout << "Fehler #" << curl_easy_strerror(rc) << "#" << endl;
+            curl_easy_cleanup(curl);
+            curl_slist_free_all(header);
             exit(1);
         }
     }

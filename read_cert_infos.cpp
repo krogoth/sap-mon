@@ -42,7 +42,7 @@ vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_ch
     vector<string> certlist_subj_valid_until;
 
     for (size_t i = 0; i < certlist_array.size(); ++i) {
-        int finde_semikolon = certlist_array[i].find(";;;");
+        size_t finde_semikolon = certlist_array[i].find(";;;");
         string cert_hex     = certlist_array[i].substr(0, finde_semikolon);
 
         int bytes   = cert_hex.size() / 3;

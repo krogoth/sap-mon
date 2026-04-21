@@ -38,8 +38,8 @@ int rfc_ping(const CliParams& p, string& out_message)
 
     RfcInvoke(conn, rfc_handle, &errorInfo);
 
-    SAP_UC mess_sap_uc[99999]     = iU("");
-    SAP_UC check_ok_sap_uc[99999] = iU("");
+    SAP_UC mess_sap_uc[4096]     = iU("");
+    SAP_UC check_ok_sap_uc[4096] = iU("");
     unsigned resultLen = 0;
 
     RfcGetString(rfc_handle, cU("MESS"),     mess_sap_uc,     sizeofU(mess_sap_uc),     &resultLen, &errorInfo);
@@ -58,7 +58,7 @@ int rfc_ping(const CliParams& p, string& out_message)
             RfcSetChars(rfc_handle, cU("IV_PING"), cU("X"), 1, &errorInfo);
             RfcInvoke(conn, rfc_handle, &errorInfo);
 
-            SAP_UC ping_sap_uc[99999] = iU("");
+            SAP_UC ping_sap_uc[4096] = iU("");
             RfcGetString(rfc_handle, cU("EV_PING_MESSAGE"), ping_sap_uc, sizeofU(ping_sap_uc), &resultLen, &errorInfo);
 
             string ping_msg = sapUcToUtf8(ping_sap_uc, errorInfo);

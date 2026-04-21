@@ -32,7 +32,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
     istringstream iss(web_response);
     read_xml(iss, ptree);
 
-    int wo_ist_sapcontrol_response = web_response.find("SAPControl:");
+    size_t wo_ist_sapcontrol_response = web_response.find("SAPControl:");
 
     string type = p.type;
 
@@ -42,8 +42,8 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
         string buf = web_response;
         bool anzeige = false;
         while (true) {
-            int anfang = buf.find("<item>");
-            int ende   = buf.find("</item>");
+            size_t anfang = buf.find("<item>");
+            size_t ende   = buf.find("</item>");
 
             string item;
             try { item = buf.substr(anfang + 6, ende - anfang); }
@@ -67,42 +67,36 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
         exit(0);
     }
 
-    int wo_GetProcessList   = web_response.find("<SAPControl:GetProcessListResponse>");
-    int wo_exitcode_null    = web_response.find("<exitcode>0</exitcode>");
-    int wo_GetAlerts        = web_response.find("<SAPControl:GetAlertsResponse>");
-    int wo_exit11           = web_response.find("<exitcode>11</exitcode>");
-    int wo_GetAlertTree     = web_response.find("<SAPControl:GetAlertTreeResponse>");
-    int wo_J2EEProcess      = web_response.find("<SAPControl:J2EEGetProcessListResponse>");
-    int wo_J2EEComponent    = web_response.find("<SAPControl:J2EEGetComponentListResponse>");
-    int wo_J2EEHeap         = web_response.find("<SAPControl:J2EEGetVMHeapInfoResponse>");
+    size_t wo_GetProcessList   = web_response.find("<SAPControl:GetProcessListResponse>");
+    size_t wo_exitcode_null    = web_response.find("<exitcode>0</exitcode>");
+    size_t wo_GetAlerts        = web_response.find("<SAPControl:GetAlertsResponse>");
+    size_t wo_exit11           = web_response.find("<exitcode>11</exitcode>");
+    size_t wo_GetAlertTree     = web_response.find("<SAPControl:GetAlertTreeResponse>");
+    size_t wo_J2EEProcess      = web_response.find("<SAPControl:J2EEGetProcessListResponse>");
+    size_t wo_J2EEComponent    = web_response.find("<SAPControl:J2EEGetComponentListResponse>");
+    size_t wo_J2EEHeap         = web_response.find("<SAPControl:J2EEGetVMHeapInfoResponse>");
 
-    if (wo_exit11 > -1) {
+    if (wo_exit11 != string::npos) {
         cout << "\nFehler: " << web_response << endl;
         return -1;
     }
 
-    if (wo_GetProcessList == -1 && wo_exitcode_null == -1 && wo_GetAlerts == -1
-     && wo_GetAlertTree   == -1 && wo_J2EEProcess  == -1 && wo_J2EEComponent == -1
-     && wo_J2EEHeap       == -1)
+    if (wo_GetProcessList == string::npos && wo_exitcode_null == string::npos && wo_GetAlerts == string::npos
+     && wo_GetAlertTree   == string::npos && wo_J2EEProcess  == string::npos && wo_J2EEComponent == string::npos
+     && wo_J2EEHeap       == string::npos)
     {
         cout << "Fehler: " << web_response << endl;
         return 2;
     }
 
-    if (wo_ist_sapcontrol_response == -1) return -1;
+    if (wo_ist_sapcontrol_response == string::npos) return -1;
 
     string cmd_resp = web_response.substr(wo_ist_sapcontrol_response, web_response.length());
-    int gt_pos = cmd_resp.find(">");
+    size_t gt_pos = cmd_resp.find(">");
     cmd_resp = cmd_resp.substr(11, gt_pos - 11);
 
-    int item_gefunden      = -1;
-    int status_gray        = -1;
-    int status_red         = -1;
-    int status_yellow      = -1;
-    int status_green       = -1;
-    bool name_gefunden     = false;
-    bool object_gefunden   = false;
-    int retcode            = -1;
+    bool name_gefunden = false;
+    int retcode        = -1;
 
     if (cmd_resp == "GetProcessListResponse") {
         BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
@@ -132,6 +126,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
     }
 
     if (cmd_resp == "GetAlertsResponse") {
+        bool object_gefunden = false;
         BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
             ptree.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:GetAlertsResponse.alert"))
         {
@@ -168,8 +163,8 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
         if (regex_search(p.sapgenpse, reg_match, rx_getname)) {
             bool running = true;
             while (running) {
-                int anfang = buf.find("<item>");
-                int ende   = buf.find("</item>");
+                size_t anfang = buf.find("<item>");
+                size_t ende   = buf.find("</item>");
                 string item;
                 try { item = buf.substr(anfang + 6, ende - anfang); }
                 catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }
@@ -191,8 +186,8 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
         if (regex_search(p.sapgenpse, reg_match, rx_maintain)) {
             bool running = true;
             while (running) {
-                int anfang = buf.find("<item>");
-                int ende   = buf.find("</item>");
+                size_t anfang = buf.find("<item>");
+                size_t ende   = buf.find("</item>");
                 string item;
                 try { item = buf.substr(anfang + 6, ende - anfang); }
                 catch (out_of_range&) { cout << "Error xml_extract.cpp std::out_of_range" << endl; exit(0); }

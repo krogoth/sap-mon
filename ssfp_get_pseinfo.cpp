@@ -39,7 +39,6 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
     };
 
     vector<string> certlist;
-    unsigned resultLen = 0;
 
     for (size_t i = 0; i < context_list.size(); ++i) {
         auto uc_ctx    = utf8ToSapUc(context_list[i], errorInfo);
@@ -55,7 +54,7 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
         RfcGetTable(rfc_handle, cU("CERTIFICATELIST"), &table, &errorInfo);
         RfcGetRowCount(table, &rowCount, &errorInfo);
 
-        SAP_UC certificate_in_hex[99999] = iU("");
+        SAP_UC certificate_in_hex[32768] = iU("");
 
         for (unsigned j = 0; j < rowCount; ++j) {
             RfcMoveTo(table, j, NULL);

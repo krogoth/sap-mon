@@ -47,7 +47,7 @@ string sapcontrol_commands(const CliParams& p)
             + "<command>" + sapcontrol_path + "</command>"
             + "<async>0</async><timeout>30</timeout><protocolfile></protocolfile>"
             + "</SAPControl:OSExecute>"
-            + SOAP_ENVELOPE_CLOSE + "'";
+            + SOAP_ENVELOPE_CLOSE;
     }
 
     // certificate-show: sapgenpse get_my_name or maintain_pk
