@@ -31,6 +31,7 @@ struct CliParams {
     std::string psefile;
     std::string sapgenpse;
     bool        insecure = false;  // -insecure: skip SSL peer/host verification (HTTPS only)
+    bool        verbose  = false;  // -verbose/-v: print operation details to stderr
 };
 
 // RAII owner for SAP_UC* buffers allocated via mallocU.

@@ -55,6 +55,9 @@ RFC_RC          g_rc = RFC_OK;
 // SECTION 5 — Connexion RFC centralisée
 // =============================================================================
 
+static inline void vlog(bool verbose, const string& msg) {
+    if (verbose) cerr << "[v] " << msg << "\n";
+}
 
 /**
  * checkConnection — affiche l'erreur et exit si la connexion a échoué.
@@ -74,14 +77,14 @@ void checkConnection(RFC_CONNECTION_HANDLE conn, const RFC_ERROR_INFO& errInfo) 
  * xmiLogon — invoque BAPI_XMI_LOGON, commun à plusieurs modes.
  * @param iface "XAL" ou "XBP"
  */
-void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& errInfo) {
+void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& errInfo, bool verbose = false) {
+    vlog(verbose, string("XMI logon interface=") + iface);
     auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_XMI_LOGON"), &errInfo);
     if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_XMI_LOGON failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
     RfcSetChars(handle, cU("EXTCOMPANY"), cU("TESTCOMPANY"), 11, &errInfo);
     RfcSetChars(handle, cU("EXTPRODUCT"), cU("TESTPRODUKT"), 11, &errInfo);
 
-    // cU() est une macro compile-time — dispatch explicite sur les deux valeurs possibles
     unsigned iface_len = static_cast<unsigned>(strlen(iface));
     if (strcmp(iface, "XAL") == 0)
         RfcSetChars(handle, cU("INTERFACE"), cU("XAL"), iface_len, &errInfo);
@@ -91,6 +94,7 @@ void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& err
     RfcSetChars(handle, cU("VERSION"), cU("1.0"), 3, &errInfo);
     RfcInvoke(conn, handle, &errInfo);
     RfcDestroyFunction(handle, &errInfo);
+    vlog(verbose, string("XMI logon ") + iface + " OK");
 }
 
 // =============================================================================
@@ -101,11 +105,12 @@ void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& err
 using HandlerFn = function<int(RFC_CONNECTION_HANDLE, const CliParams&, RFC_ERROR_INFO&)>;
 
 // ----------------------------------------------------------------------------
-int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_INFO& errInfo) {
+int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
     cout << "Alle verfügbaren CCMS Monitore" << endl;
 
-    xmiLogon(conn, "XAL", errInfo);
+    xmiLogon(conn, "XAL", errInfo, p.verbose);
 
+    vlog(p.verbose, "BAPI_SYSTEM_MON_GETLIST: fetching monitor list");
     auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
     if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETLIST failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
@@ -116,6 +121,7 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_IN
     RFC_TABLE_HANDLE table;
     RfcGetTable(handle, cU("MONITOR_NAMES"), &table, &errInfo);
     RfcGetRowCount(table, &rowCount, &errInfo);
+    vlog(p.verbose, "Monitor sets found: " + to_string(rowCount));
 
     SAP_UC ms_name[4096]   = iU("");
     SAP_UC moni_name[4096] = iU("");
@@ -174,9 +180,11 @@ static string resolveMtClass(
     const SAP_UC* mte_name,
     const SAP_UC* object_name,
     const SAP_UC* system_id,
-    RFC_STRUCTURE_HANDLE& outTid,   // [out] structure TID pour appels suivants
-    RFC_ERROR_INFO& errInfo)
+    RFC_STRUCTURE_HANDLE& outTid,
+    RFC_ERROR_INFO& errInfo,
+    bool verbose = false)
 {
+    vlog(verbose, "BAPI_SYSTEM_MTE_GETTIDBYNAME: resolving TID");
     auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MTE_GETTIDBYNAME"), &errInfo);
     if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MTE_GETTIDBYNAME failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
@@ -196,6 +204,7 @@ static string resolveMtClass(
     string mtclass = sapUcToUtf8(message_mtclass, errInfo);
     if (mtclass.size() > 3) mtclass = mtclass.substr(0, 3);
 
+    vlog(verbose, "TID resolved, MTCLASS=" + mtclass);
     RfcDestroyFunction(handle, &errInfo);
     return mtclass;
 }
@@ -210,7 +219,8 @@ static string readMteValue(
     RFC_STRUCTURE_HANDLE tid,
     SAP_UC* message_buf,
     unsigned msg_buf_size,
-    RFC_ERROR_INFO& errInfo)
+    RFC_ERROR_INFO& errInfo,
+    bool verbose = false)
 {
     struct MteConfig {
         const SAP_UC* bapi_name;
@@ -230,6 +240,7 @@ static string readMteValue(
     if (it == dispatch.end()) return {};
 
     const auto& cfg = it->second;
+    vlog(verbose, string("readMteValue: calling ") + sapUcToUtf8(cfg.bapi_name, errInfo));
     auto bapi = RfcGetFunctionDesc(conn, cfg.bapi_name, &errInfo);
     if (!bapi) return {};
     auto handle = RfcCreateFunction(bapi, &errInfo);
@@ -256,13 +267,14 @@ static string readMteValue(
     RfcGetString(valueStruct, cfg.result_field, message_buf, msg_buf_size, &resultLen, &errInfo);
 
     string result = sapUcToUtf8(message_buf, errInfo);
+    vlog(verbose, "MTE value=" + result);
     RfcDestroyFunction(handle, &errInfo);
     return result;
 }
 
 // ----------------------------------------------------------------------------
 int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
-    xmiLogon(conn, "XAL", errInfo);
+    xmiLogon(conn, "XAL", errInfo, p.verbose);
 
     // Parsing du monitor path : SID\ContextName\...\ObjectName\MteName
     const string& monitor_name = p.monitor;
@@ -287,13 +299,16 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
     auto uc_mte     = utf8ToSapUc(mte_name,     errInfo);
     auto uc_obj     = utf8ToSapUc(object_name,  errInfo);
 
+    vlog(p.verbose, "monitor=" + monitor_name);
+    vlog(p.verbose, "sid=" + sap_sid + " context=" + context_name + " object=" + object_name + " mte=" + mte_name);
+
     RFC_STRUCTURE_HANDLE tid;
     string mtclass = resolveMtClass(conn,
         uc_ctx.get(), uc_mte.get(), uc_obj.get(), uc_sid.get(),
-        tid, errInfo);
+        tid, errInfo, p.verbose);
 
     SAP_UC message[8192] = iU("");
-    string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo);
+    string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
 
     if (value.empty()) {
         RfcCloseConnection(conn, &errInfo);
@@ -321,7 +336,7 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
 
 // ----------------------------------------------------------------------------
 int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
-    xmiLogon(conn, "XAL", errInfo);
+    xmiLogon(conn, "XAL", errInfo, p.verbose);
 
     const string& monitor_name = p.monitor;
     size_t bs1 = monitor_name.find('\\');
@@ -338,6 +353,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
     auto uc_ms   = utf8ToSapUc(ms_name_s,  errInfo);
     auto uc_moni = utf8ToSapUc(moni_name_s, errInfo);
 
+    vlog(p.verbose, "BAPI_SYSTEM_MON_GETTREE: ms=" + ms_name_s + " moni=" + moni_name_s);
     auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
     if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETTREE failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
@@ -357,6 +373,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
     RFC_TABLE_HANDLE table;
     RfcGetTable(handle, cU("TREE_NODES"), &table, &errInfo);
     RfcGetRowCount(table, &rowCount, &errInfo);
+    vlog(p.verbose, "Tree nodes found: " + to_string(rowCount));
 
     SAP_UC context_name[4096] = iU("");
     SAP_UC mte_name[4096]     = iU("");
@@ -376,11 +393,11 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         RFC_STRUCTURE_HANDLE tid;
         string mtclass = resolveMtClass(conn,
             context_name, mte_name, object_name, system_id,
-            tid, errInfo);
+            tid, errInfo, p.verbose);
 
         if (mtclass == "050") { cout << "###" << endl; continue; }
 
-        string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo);
+        string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
         if (!value.empty()) printfU(cU(" %s\n"), message);
     }
 
@@ -390,8 +407,9 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 
 // ----------------------------------------------------------------------------
 int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
-    xmiLogon(conn, "XBP", errInfo);
+    xmiLogon(conn, "XBP", errInfo, p.verbose);
 
+    vlog(p.verbose, "BAPI_XBP_JOB_SELECT: fetching all jobs");
     auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_XBP_JOB_SELECT"), &errInfo);
     if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_XBP_JOB_SELECT failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
@@ -418,6 +436,7 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
     RFC_TABLE_HANDLE table;
     RfcGetTable(handle, cU("JOB_HEAD"), &table, &errInfo);
     RfcGetRowCount(table, &rowCount, &errInfo);
+    vlog(p.verbose, "Jobs selected: " + to_string(rowCount));
 
     SAP_UC job_name[4096]       = iU("");
     SAP_UC job_count[4096]      = iU("");
@@ -449,6 +468,7 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
     }
     RfcDestroyFunction(handle, &errInfo);
     RfcCloseConnection(conn, &errInfo);
+    vlog(p.verbose, "Aborted jobs (raw): " + to_string(job_name_und_job_count_array.size()));
 
     // --- Logique de déduplication (inchangée) ---
     vector<string> job_name_array_3;
@@ -511,9 +531,10 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
 }
 
 // ----------------------------------------------------------------------------
-int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERROR_INFO& errInfo) {
-    xmiLogon(conn, "XBP", errInfo);
+int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
+    xmiLogon(conn, "XBP", errInfo, p.verbose);
 
+    vlog(p.verbose, "/SDF/GET_DUMP_LOG: fetching ABAP dump log");
     auto bapi = RfcGetFunctionDesc(conn, cU("/SDF/GET_DUMP_LOG"), &errInfo);
     if (!bapi) throw std::runtime_error("RfcGetFunctionDesc /SDF/GET_DUMP_LOG failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
@@ -528,6 +549,7 @@ int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& /*p*/, RFC_ERR
     RFC_TABLE_HANDLE table;
     RfcGetTable(handle, cU("ET_E2E_LOG"), &table, &errInfo);
     RfcGetRowCount(table, &rowCount, &errInfo);
+    vlog(p.verbose, "Dump entries found: " + to_string(rowCount) + " (checking last 3)");
 
     // Champs à extraire
     struct DumpEntry { string date, time, user, severity, host, field1, field4, field9; };
@@ -628,7 +650,9 @@ int handle_sslview(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERROR
 
 // ----------------------------------------------------------------------------
 int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERROR_INFO& /*errInfo*/) {
+    vlog(p.verbose, "sslcheck: subject=" + p.subject + " warn=" + p.warn + " critical=" + p.critical);
     auto certlist            = ssfp_get_pseinfo(p);
+    vlog(p.verbose, "Certificates retrieved: " + to_string(certlist.size()));
     auto certlist_subj_valid = read_cert_infos(certlist, true);
 
     string subject_suchen = p.subject;
@@ -646,6 +670,7 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
         long diff_sec      = static_cast<long>(mktime(&zeit)) - static_cast<long>(now);
         long tage          = diff_sec / 60 / 60 / 24;
 
+        vlog(p.verbose, "Certificate expires in " + to_string(tage) + " days");
         if (p.warn.empty()) { cout << tage << endl; return 0; }
 
         long tage_warn     = stol(p.warn);
@@ -660,6 +685,7 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
 
 // ----------------------------------------------------------------------------
 int handle_rfc(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERROR_INFO& /*errInfo*/) {
+    vlog(p.verbose, "RFC ping: destination=" + p.rfc_dest);
     string message;
     int rc = rfc_ping(p, message);
     if (rc == 0) { cout << "OK - RFC destination " << p.rfc_dest << endl; return 0; }
@@ -769,6 +795,7 @@ static CliParams parseArgsU(int argc, SAP_UC** argv) {
     p.psefile    = get("psefile");
     p.sapgenpse  = get("sapgenpse");
     p.insecure   = kv.count("insecure") > 0;
+    p.verbose    = kv.count("verbose") > 0 || kv.count("v") > 0;
 
     // Validate credentials for RFC-based modes
     static const set<string> rfc_modes = {
@@ -863,6 +890,10 @@ static void print_help() {
 "  -javashow              List available sapcontrol web methods\n"
 "    -proto=<http|https>    Protocol\n"
 "\n"
+"General options:\n"
+"  -verbose / -v          Print operation details to stderr\n"
+"  -insecure              Skip SSL peer/host verification (HTTPS only)\n"
+"\n"
 "Exit codes follow Nagios/Icinga convention: 0=OK, 1=WARNING, 2=CRITICAL.\n"
 "\n"
 "Examples:\n"
@@ -921,11 +952,14 @@ int mainU(int argc, SAP_UC** argv) {
         return -1;
     }
 
+    vlog(p.verbose, "mode=" + p.mode);
+
     // --- Connexion RFC directe SAP_UC** pour les modes RFC ---
     RFC_CONNECTION_HANDLE conn = nullptr;
-    vector<SapUcString> ucStorage; // fallback si conversion nécessaire
+    vector<SapUcString> ucStorage;
 
     if (RFC_CONNECTED_MODES.count(p.mode)) {
+        vlog(p.verbose, "Opening RFC connection: host=" + p.hostname + " user=" + p.username + " sysnr=" + p.sysnr + " client=" + p.client);
         SAP_UC *uc_user=nullptr, *uc_pass=nullptr, *uc_host=nullptr;
         SAP_UC *uc_sid=nullptr,  *uc_sys=nullptr,  *uc_cli=nullptr;
 
@@ -948,6 +982,7 @@ int mainU(int argc, SAP_UC** argv) {
             uc_user, uc_pass, uc_host, uc_sid, uc_sys, uc_cli,
             g_errorInfo);
         checkConnection(conn, g_errorInfo);
+        vlog(p.verbose, "RFC connection established");
     }
 
     // --- Invocation ---
