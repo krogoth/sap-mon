@@ -291,6 +291,21 @@ static RFC_FUNCTION_HANDLE resolveMtClass(
 
     RfcInvoke(conn, handle, &errInfo);
 
+    // Always check RETURN first — if SAP can't find the MTE the TID fields are empty.
+    {
+        RFC_STRUCTURE_HANDLE ret;
+        SAP_UC ret_type[4] = iU(""), ret_msg[4096] = iU("");
+        unsigned tlen = 0, mlen = 0;
+        if (RfcGetStructure(handle, cU("RETURN"), &ret, &errInfo) == RFC_OK) {
+            RfcGetString(ret, cU("TYPE"),    ret_type, sizeofU(ret_type),  &tlen, &errInfo);
+            RfcGetString(ret, cU("MESSAGE"), ret_msg,  sizeofU(ret_msg),   &mlen, &errInfo);
+            string rtype = ucToStr(ret_type, tlen);
+            string rmsg  = ucToStr(ret_msg,  mlen);
+            if (!rmsg.empty())
+                vlog(verbose, "GETTIDBYNAME RETURN type=" + rtype + " msg=" + rmsg);
+        }
+    }
+
     SAP_UC message_mtclass[9999] = iU("");
     unsigned mtclass_len = 0;
     RfcGetStructure(handle, cU("TID"), &outTid, &errInfo);
