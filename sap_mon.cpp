@@ -187,17 +187,22 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
             for (unsigned k = 0; k < fieldCount; ++k) {
                 RFC_FIELD_DESC fd = {};
                 RfcGetFieldDescByIndex(typeDesc, k, &fd, &errInfo);
-                // fd.name is SAP_UC[] — ABAP field names are ASCII, take low byte of each char
                 string fname;
                 for (int c = 0; c < 30 && fd.name[c] != 0; ++c)
                     fname += static_cast<char>(fd.name[c] & 0xFF);
+
                 SAP_UC fval[4096] = iU("");
                 RFC_ERROR_INFO dummyErr = {};
-                RfcGetString(table2, fd.name, fval, sizeofU(fval), nullptr, &dummyErr);
-                string fvalStr = (dummyErr.code == RFC_OK) ? sapUcToUtf8(fval, errInfo) : "<unreadable>";
+                unsigned resultLen = 0;
+                RfcGetString(table2, fd.name, fval, sizeofU(fval), &resultLen, &dummyErr);
+
                 cerr << "[v]   [" << k << "] " << fname
-                     << " (name[0]=0x" << hex << (unsigned)fd.name[0] << dec << ")"
-                     << " = '" << fvalStr << "'\n";
+                     << " rc=" << dummyErr.code
+                     << " len=" << resultLen
+                     << " raw:";
+                for (unsigned b = 0; b < min(resultLen, 6u); ++b)
+                    cerr << " 0x" << hex << (unsigned)fval[b] << dec;
+                cerr << "\n";
             }
         }
 
