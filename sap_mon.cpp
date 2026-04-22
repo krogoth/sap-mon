@@ -200,7 +200,8 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         };
 
         // Load all rows into memory so we can walk parent chains
-        struct TNode { string name, cls, sysid; int id, parent, level; };
+        // Use string keys for ALTREENUM/ALPARINTRE — values can exceed int range
+        struct TNode { string name, cls, sysid, id_s, parent_s; int level; };
         vector<TNode> nodes;
         nodes.reserve(rowCount2);
         string sysid = p.sid;
@@ -208,33 +209,33 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         for (unsigned j = 0; j < rowCount2; ++j) {
             RfcMoveTo(table2, j, &errInfo);
             TNode n;
-            n.name   = readField(cU("MTNAMESHRT"));
-            n.cls    = readField(cU("MTCLASS"));
+            n.name     = readField(cU("MTNAMESHRT"));
+            n.cls      = readField(cU("MTCLASS"));
             if (n.cls.size() > 3) n.cls = n.cls.substr(0, 3);
-            n.sysid  = readField(cU("ALSYSID"));
-            auto toInt = [](const string& s, int d = 0) {
-                try { return stoi(s); } catch (...) { return d; }
-            };
-            n.id     = toInt(readField(cU("ALTREENUM")));
-            n.parent = toInt(readField(cU("ALPARINTRE")));
-            n.level  = toInt(readField(cU("ALLEVINTRE")), 1);
+            n.sysid    = readField(cU("ALSYSID"));
+            n.id_s     = readField(cU("ALTREENUM"));
+            n.parent_s = readField(cU("ALPARINTRE"));
+            string lvl = readField(cU("ALLEVINTRE"));
+            n.level    = lvl.empty() ? 1 : [](const string& s) {
+                try { return stoi(s); } catch (...) { return 1; }
+            }(lvl);
             if (!n.sysid.empty()) sysid = n.sysid;
             nodes.push_back(n);
         }
 
-        // Build id → index lookup
-        map<int,size_t> byId;
+        // Build id → index lookup using string keys
+        map<string, size_t> byId;
         for (size_t idx = 0; idx < nodes.size(); ++idx)
-            if (nodes[idx].id > 0) byId[nodes[idx].id] = idx;
+            if (!nodes[idx].id_s.empty()) byId[nodes[idx].id_s] = idx;
 
         // Build full path for a node by walking up the parent chain
         auto buildPath = [&](size_t startIdx) -> string {
             vector<string> parts;
             size_t idx = startIdx;
-            for (int guard = 0; guard < 32; ++guard) {
+            for (int guard = 0; guard < 64; ++guard) {
                 parts.push_back(nodes[idx].name);
-                int par = nodes[idx].parent;
-                if (par == 0) break;
+                const string& par = nodes[idx].parent_s;
+                if (par.empty() || par == "0") break;
                 auto it = byId.find(par);
                 if (it == byId.end()) break;
                 idx = it->second;
