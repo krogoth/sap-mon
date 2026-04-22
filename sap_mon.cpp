@@ -93,7 +93,24 @@ void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& err
 
     RfcSetChars(handle, cU("VERSION"), cU("1.0"), 3, &errInfo);
     RfcInvoke(conn, handle, &errInfo);
+
+    RFC_STRUCTURE_HANDLE returnStruct;
+    SAP_UC ret_type[4]     = iU("");
+    SAP_UC ret_msg[8192]   = iU("");
+    unsigned resultLen     = 0;
+    RfcGetStructure(handle, cU("RETURN"), &returnStruct, &errInfo);
+    RfcGetString(returnStruct, cU("TYPE"),    ret_type, sizeofU(ret_type),   &resultLen, &errInfo);
+    RfcGetString(returnStruct, cU("MESSAGE"), ret_msg,  sizeofU(ret_msg),    &resultLen, &errInfo);
+
+    string type_utf8 = sapUcToUtf8(ret_type, errInfo);
+    string msg_utf8  = sapUcToUtf8(ret_msg,  errInfo);
+
     RfcDestroyFunction(handle, &errInfo);
+
+    if (type_utf8 == "E" || type_utf8 == "A") {
+        throw std::runtime_error(string("BAPI_XMI_LOGON (") + iface + ") failed: " + msg_utf8);
+    }
+
     vlog(verbose, string("XMI logon ") + iface + " OK");
 }
 
