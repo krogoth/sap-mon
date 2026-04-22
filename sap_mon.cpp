@@ -140,14 +140,13 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
     RfcGetRowCount(table, &rowCount, &errInfo);
     vlog(p.verbose, "Monitor sets found: " + to_string(rowCount));
 
-    SAP_UC ms_name[4096]      = iU("");
-    SAP_UC moni_name[4096]    = iU("");
-    SAP_UC ctx_name[4096]     = iU("");
-    SAP_UC obj_name[4096]     = iU("");
-    SAP_UC mte_name[4096]     = iU("");
-    SAP_UC mtclass_buf[16]    = iU("");
+    SAP_UC ms_name[4096]   = iU("");
+    SAP_UC moni_name[4096] = iU("");
 
     RFC_STRUCTURE_HANDLE returnStructure;
+
+    // Leaf MTE classes that carry a readable value
+    static const set<string> LEAF_CLASSES = {"100", "101", "102", "111"};
 
     for (unsigned i = 0; i < rowCount; ++i) {
         RfcMoveTo(table, i, &errInfo);
@@ -177,63 +176,73 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         RfcGetRowCount(table2, &rowCount2, &errInfo);
         vlog(p.verbose, "TREE_NODES rows: " + to_string(rowCount2));
 
-        // Dump all field names from the structure descriptor on the first row (verbose only)
-        if (p.verbose && rowCount2 > 0) {
-            RfcMoveTo(table2, 0, &errInfo);
-            RFC_TYPE_DESC_HANDLE typeDesc = RfcDescribeType(table2, &errInfo);
-            unsigned fieldCount = 0;
-            RfcGetFieldCount(typeDesc, &fieldCount, &errInfo);
-            cerr << "[v] TREE_NODES structure has " << fieldCount << " fields:\n";
-            for (unsigned k = 0; k < fieldCount; ++k) {
-                RFC_FIELD_DESC fd = {};
-                RfcGetFieldDescByIndex(typeDesc, k, &fd, &errInfo);
-                string fname;
-                for (int c = 0; c < 30 && fd.name[c] != 0; ++c)
-                    fname += static_cast<char>(fd.name[c] & 0xFF);
+        // Helper: read a string field from the current row, trim trailing spaces
+        auto readField = [&](const SAP_UC* fld) -> string {
+            SAP_UC buf[4096] = iU("");
+            RFC_ERROR_INFO e = {};
+            unsigned len = 0;
+            RfcGetString(table2, fld, buf, sizeofU(buf), &len, &e);
+            if (e.code != RFC_OK || len == 0) return "";
+            string s = sapUcToUtf8(buf, errInfo);
+            while (!s.empty() && s.back() == ' ') s.pop_back();
+            return s;
+        };
 
-                SAP_UC fval[4096] = iU("");
-                RFC_ERROR_INFO dummyErr = {};
-                unsigned resultLen = 0;
-                RfcGetString(table2, fd.name, fval, sizeofU(fval), &resultLen, &dummyErr);
+        // Load all rows into memory so we can walk parent chains
+        struct TNode { string name, cls, sysid; int id, parent, level; };
+        vector<TNode> nodes;
+        nodes.reserve(rowCount2);
+        string sysid = p.sid;
 
-                cerr << "[v]   [" << k << "] " << fname
-                     << " rc=" << dummyErr.code
-                     << " len=" << resultLen
-                     << " raw:";
-                for (unsigned b = 0; b < min(resultLen, 6u); ++b)
-                    cerr << " 0x" << hex << (unsigned)fval[b] << dec;
-                cerr << "\n";
-            }
-        }
-
-        string last_ctx, last_obj;
         for (unsigned j = 0; j < rowCount2; ++j) {
             RfcMoveTo(table2, j, &errInfo);
-            RfcGetString(table2, cU("CONTEXT_NAME"), ctx_name,    sizeofU(ctx_name),    nullptr, &errInfo);
-            RfcGetString(table2, cU("OBJECT_NAME"),  obj_name,    sizeofU(obj_name),    nullptr, &errInfo);
-            RfcGetString(table2, cU("MTE_NAME"),     mte_name,    sizeofU(mte_name),    nullptr, &errInfo);
-            RfcGetString(table2, cU("MTCLASS"),      mtclass_buf, sizeofU(mtclass_buf), nullptr, &errInfo);
+            TNode n;
+            n.name   = readField(cU("MTNAMESHRT"));
+            n.cls    = readField(cU("MTCLASS"));
+            if (n.cls.size() > 3) n.cls = n.cls.substr(0, 3);
+            n.sysid  = readField(cU("ALSYSID"));
+            auto toInt = [](const string& s, int d = 0) {
+                try { return stoi(s); } catch (...) { return d; }
+            };
+            n.id     = toInt(readField(cU("ALTREENUM")));
+            n.parent = toInt(readField(cU("ALPARINTRE")));
+            n.level  = toInt(readField(cU("ALLEVINTRE")), 1);
+            if (!n.sysid.empty()) sysid = n.sysid;
+            nodes.push_back(n);
+        }
 
-            string ctx     = sapUcToUtf8(ctx_name,    errInfo);
-            string obj     = sapUcToUtf8(obj_name,    errInfo);
-            string mte     = sapUcToUtf8(mte_name,    errInfo);
-            string mtclass = sapUcToUtf8(mtclass_buf, errInfo);
-            if (mtclass.size() > 3) mtclass = mtclass.substr(0, 3);
+        // Build id → index lookup
+        map<int,size_t> byId;
+        for (size_t idx = 0; idx < nodes.size(); ++idx)
+            if (nodes[idx].id > 0) byId[nodes[idx].id] = idx;
 
-            if (ctx != last_ctx) {
-                cout << "  |  [" << ctx << "]\n";
-                last_ctx = ctx;
-                last_obj.clear();
+        // Build full path for a node by walking up the parent chain
+        auto buildPath = [&](size_t startIdx) -> string {
+            vector<string> parts;
+            size_t idx = startIdx;
+            for (int guard = 0; guard < 32; ++guard) {
+                parts.push_back(nodes[idx].name);
+                int par = nodes[idx].parent;
+                if (par == 0) break;
+                auto it = byId.find(par);
+                if (it == byId.end()) break;
+                idx = it->second;
             }
-            if (!obj.empty() && obj != last_obj) {
-                cout << "  |    \\ " << obj << "\n";
-                last_obj = obj;
-            }
-            if (!mte.empty()) {
-                cout << "  |       -> " << mte;
-                if (!mtclass.empty()) cout << "  (class=" << mtclass << ")";
-                cout << "\n";
-                cout << "  |          -monitor='" << p.sid << "\\" << ctx << "\\" << obj << "\\" << mte << "'\n";
+            reverse(parts.begin(), parts.end());
+            string path = sysid;
+            for (const auto& seg : parts) path += "\\" + seg;
+            return path;
+        };
+
+        // Display tree: indent by level, show -monitor= path for leaf nodes
+        for (size_t idx = 0; idx < nodes.size(); ++idx) {
+            const TNode& n = nodes[idx];
+            string indent((n.level > 0 ? n.level - 1 : 0) * 2, ' ');
+            if (LEAF_CLASSES.count(n.cls)) {
+                cout << "  |  " << indent << "-> " << n.name << "  (class=" << n.cls << ")\n";
+                cout << "  |  " << indent << "   -monitor='" << buildPath(idx) << "'\n";
+            } else {
+                cout << "  |  " << indent << n.name << "\n";
             }
         }
         cout << "\n";
