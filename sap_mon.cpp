@@ -140,9 +140,12 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
     RfcGetRowCount(table, &rowCount, &errInfo);
     vlog(p.verbose, "Monitor sets found: " + to_string(rowCount));
 
-    SAP_UC ms_name[4096]   = iU("");
-    SAP_UC moni_name[4096] = iU("");
-    SAP_UC object_name[4096] = iU("");
+    SAP_UC ms_name[4096]      = iU("");
+    SAP_UC moni_name[4096]    = iU("");
+    SAP_UC ctx_name[4096]     = iU("");
+    SAP_UC obj_name[4096]     = iU("");
+    SAP_UC mte_name[4096]     = iU("");
+    SAP_UC mtclass_buf[16]    = iU("");
 
     RFC_STRUCTURE_HANDLE returnStructure;
 
@@ -173,13 +176,37 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         RfcGetTable(handle2, cU("TREE_NODES"), &table2, &errInfo);
         RfcGetRowCount(table2, &rowCount2, &errInfo);
 
+        string last_ctx, last_obj;
         for (unsigned j = 0; j < rowCount2; ++j) {
             RfcMoveTo(table2, j, &errInfo);
-            RfcGetString(table2, cU("CUSGRPNAME"), object_name, sizeofU(object_name), nullptr, &errInfo);
-            printfU(cU(" \t| -> %s\n"), object_name);
-            RfcGetString(table2, cU("OBJECTNAME"), object_name, sizeofU(object_name), nullptr, &errInfo);
-            printfU(cU("\t| ->%s\n \t|\n"), object_name);
+            RfcGetString(table2, cU("CONTEXT_NAME"), ctx_name,    sizeofU(ctx_name),    nullptr, &errInfo);
+            RfcGetString(table2, cU("OBJECT_NAME"),  obj_name,    sizeofU(obj_name),    nullptr, &errInfo);
+            RfcGetString(table2, cU("MTE_NAME"),     mte_name,    sizeofU(mte_name),    nullptr, &errInfo);
+            RfcGetString(table2, cU("MTCLASS"),      mtclass_buf, sizeofU(mtclass_buf), nullptr, &errInfo);
+
+            string ctx     = sapUcToUtf8(ctx_name,    errInfo);
+            string obj     = sapUcToUtf8(obj_name,    errInfo);
+            string mte     = sapUcToUtf8(mte_name,    errInfo);
+            string mtclass = sapUcToUtf8(mtclass_buf, errInfo);
+            if (mtclass.size() > 3) mtclass = mtclass.substr(0, 3);
+
+            if (ctx != last_ctx) {
+                cout << "  |  [" << ctx << "]\n";
+                last_ctx = ctx;
+                last_obj.clear();
+            }
+            if (!obj.empty() && obj != last_obj) {
+                cout << "  |    \\ " << obj << "\n";
+                last_obj = obj;
+            }
+            if (!mte.empty()) {
+                cout << "  |       -> " << mte;
+                if (!mtclass.empty()) cout << "  (class=" << mtclass << ")";
+                cout << "\n";
+                cout << "  |          -monitor='" << p.sid << "\\" << ctx << "\\" << obj << "\\" << mte << "'\n";
+            }
         }
+        cout << "\n";
         RfcDestroyFunction(handle2, &errInfo);
     }
     RfcDestroyFunction(handle, &errInfo);
