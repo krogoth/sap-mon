@@ -175,6 +175,7 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         RFC_TABLE_HANDLE table2;
         RfcGetTable(handle2, cU("TREE_NODES"), &table2, &errInfo);
         RfcGetRowCount(table2, &rowCount2, &errInfo);
+        vlog(p.verbose, "TREE_NODES rows: " + to_string(rowCount2));
 
         string last_ctx, last_obj;
         for (unsigned j = 0; j < rowCount2; ++j) {
@@ -183,6 +184,15 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
             RfcGetString(table2, cU("OBJECT_NAME"),  obj_name,    sizeofU(obj_name),    nullptr, &errInfo);
             RfcGetString(table2, cU("MTE_NAME"),     mte_name,    sizeofU(mte_name),    nullptr, &errInfo);
             RfcGetString(table2, cU("MTCLASS"),      mtclass_buf, sizeofU(mtclass_buf), nullptr, &errInfo);
+
+            if (p.verbose) {
+                string c = sapUcToUtf8(ctx_name, errInfo);
+                string o = sapUcToUtf8(obj_name, errInfo);
+                string m = sapUcToUtf8(mte_name, errInfo);
+                string t = sapUcToUtf8(mtclass_buf, errInfo);
+                cerr << "[v] row[" << j << "] CONTEXT_NAME='" << c << "' OBJECT_NAME='" << o
+                     << "' MTE_NAME='" << m << "' MTCLASS='" << t << "'\n";
+            }
 
             string ctx     = sapUcToUtf8(ctx_name,    errInfo);
             string obj     = sapUcToUtf8(obj_name,    errInfo);
