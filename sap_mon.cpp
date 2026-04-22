@@ -210,7 +210,7 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         };
 
         // Load all rows, then use level-based path stack (nodes are in depth-first order)
-        struct TNode { string name, cls, sysid, context, objname; int level; };
+        struct TNode { string name, cls, sysid, mtmcname, objname; int level; };
         vector<TNode> nodes;
         nodes.reserve(rowCount2);
         string sysid = p.sid;
@@ -222,8 +222,11 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
             n.cls     = readField(cU("MTCLASS"));
             if (n.cls.size() > 3) n.cls = n.cls.substr(0, 3);
             n.sysid   = readField(cU("ALSYSID"));
-            n.context = readField(cU("CUSGRPNAME"));
-            n.objname = readField(cU("OBJECTNAME"));
+            // MTMCNAME is the monitoring-concept name — the exact value that
+            // BAPI_SYSTEM_MTE_GETTIDBYNAME expects as CONTEXT_NAME.
+            // CUSGRPNAME is a display group label and is NOT accepted by the BAPI.
+            n.mtmcname = readField(cU("MTMCNAME"));
+            n.objname  = readField(cU("OBJECTNAME"));
             string lvl = readField(cU("ALLEVINTRE"));
             n.level = lvl.empty() ? 1 : [](const string& s) {
                 try { return stoi(s); } catch (...) { return 1; }
@@ -234,8 +237,8 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
 
         // Display tree using a path stack — no parent-ID lookup needed because
         // BAPI_SYSTEM_MON_GETTREE returns nodes in depth-first traversal order.
-        // For leaf nodes: prefer CUSGRPNAME/OBJECTNAME (exact BAPI params) over
-        // the full stack path when available.
+        // For leaf nodes: use MTMCNAME/OBJECTNAME (exact BAPI_SYSTEM_MTE_GETTIDBYNAME
+        // params) when available; fall back to the visual stack path otherwise.
         vector<string> pathStack;
         for (const TNode& n : nodes) {
             string indent((n.level > 0 ? n.level - 1 : 0) * 2, ' ');
@@ -246,15 +249,16 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
 
             if (LEAF_CLASSES.count(n.cls)) {
                 string monitor_path;
-                if (!n.context.empty() && !n.objname.empty()) {
-                    // Best: use the exact BAPI_SYSTEM_MTE_GETTIDBYNAME triplet
-                    monitor_path = sysid + "\\" + n.context + "\\" + n.objname + "\\" + n.name;
+                if (!n.mtmcname.empty() && !n.objname.empty()) {
+                    monitor_path = sysid + "\\" + n.mtmcname + "\\" + n.objname + "\\" + n.name;
                 } else {
-                    // Fallback: full stack path (user may need to adjust)
+                    // Fallback: full stack path
                     monitor_path = sysid;
                     for (const auto& seg : pathStack) monitor_path += "\\" + seg;
                     monitor_path += "\\" + n.name;
                 }
+                if (p.verbose)
+                    cerr << "[v]   mtmcname='" << n.mtmcname << "' objname='" << n.objname << "'\n";
                 cout << "  |  " << indent << "-> " << n.name << "  (class=" << n.cls << ")\n";
                 cout << "  |  " << indent << "   -monitor='" << monitor_path << "'\n";
             } else {
@@ -503,24 +507,40 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 
     for (unsigned i = 0; i < rowCount; ++i) {
         RfcMoveTo(table, i, &errInfo);
-        RfcGetString(table, cU("MTSYSID"),   system_id,   sizeofU(system_id),   nullptr, &errInfo);
-        RfcGetString(table, cU("MTMCNAME"),  context_name,sizeofU(context_name),nullptr, &errInfo);
-        RfcGetString(table, cU("OBJECTNAME"),object_name, sizeofU(object_name), nullptr, &errInfo);
-        RfcGetString(table, cU("MTNAMESHRT"),mte_name,    sizeofU(mte_name),    nullptr, &errInfo);
+        unsigned len_sys = 0, len_ctx = 0, len_obj = 0, len_mte = 0;
+        RfcGetString(table, cU("MTSYSID"),   system_id,   sizeofU(system_id),   &len_sys, &errInfo);
+        RfcGetString(table, cU("MTMCNAME"),  context_name,sizeofU(context_name),&len_ctx, &errInfo);
+        RfcGetString(table, cU("OBJECTNAME"),object_name, sizeofU(object_name), &len_obj, &errInfo);
+        RfcGetString(table, cU("MTNAMESHRT"),mte_name,    sizeofU(mte_name),    &len_mte, &errInfo);
 
-        printfU(cU("%s\\%s\\%s\\%s "), system_id, context_name, object_name, mte_name);
+        // Convert to UTF-8 for display, then re-encode to SAP_UC for BAPI params
+        string s_sys = ucToStr(system_id,   len_sys);
+        string s_ctx = ucToStr(context_name,len_ctx);
+        string s_obj = ucToStr(object_name, len_obj);
+        string s_mte = ucToStr(mte_name,    len_mte);
+
+        // Skip rows with no MTE name (container nodes)
+        if (s_mte.empty()) continue;
+
+        cout << s_sys << "\\" << s_ctx << "\\" << s_obj << "\\" << s_mte << " ";
+
+        // Re-encode to SAP_UC for BAPI parameter passing
+        auto uc_sys2 = utf8ToSapUc(s_sys, errInfo);
+        auto uc_ctx2 = utf8ToSapUc(s_ctx, errInfo);
+        auto uc_obj2 = utf8ToSapUc(s_obj, errInfo);
+        auto uc_mte2 = utf8ToSapUc(s_mte, errInfo);
 
         RFC_STRUCTURE_HANDLE tid;
         string mtclass;
         auto tid_fn = resolveMtClass(conn,
-            context_name, mte_name, object_name, system_id,
+            uc_ctx2.get(), uc_mte2.get(), uc_obj2.get(), uc_sys2.get(),
             tid, mtclass, errInfo, p.verbose);
 
         if (mtclass == "050") { RfcDestroyFunction(tid_fn, &errInfo); cout << "###" << endl; continue; }
 
         string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
         RfcDestroyFunction(tid_fn, &errInfo);  // safe — readMteValue done with tid
-        if (!value.empty()) printfU(cU(" %s\n"), message);
+        if (!value.empty()) cout << " " << value << "\n";
     }
 
     RfcDestroyFunction(handle, &errInfo);
