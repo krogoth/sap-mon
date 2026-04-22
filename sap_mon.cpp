@@ -51,6 +51,19 @@ RFC_RC          g_rc = RFC_OK;
 
 // parseArgs(char**) supprimé — remplacé par parseArgsU(SAP_UC**) dans mainU.
 
+// Convert a SAP_UC buffer of known length to std::string.
+// strlenU is unreliable on Linux (wchar_t is 4-byte, SAP_UC is 2-byte).
+// Uses the resultLen output of RfcGetString and low-byte extraction,
+// which is correct for all ASCII/Latin-1 ABAP field values.
+static string ucToStr(const SAP_UC* buf, unsigned len) {
+    string s;
+    s.reserve(len);
+    for (unsigned i = 0; i < len; ++i)
+        s += static_cast<char>(buf[i] & 0xFF);
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s;
+}
+
 // =============================================================================
 // SECTION 5 — Connexion RFC centralisée
 // =============================================================================
@@ -97,18 +110,18 @@ void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& err
     RFC_STRUCTURE_HANDLE returnStruct;
     SAP_UC ret_type[4]     = iU("");
     SAP_UC ret_msg[8192]   = iU("");
-    unsigned resultLen     = 0;
+    unsigned typeLen = 0, msgLen = 0;
     RfcGetStructure(handle, cU("RETURN"), &returnStruct, &errInfo);
-    RfcGetString(returnStruct, cU("TYPE"),    ret_type, sizeofU(ret_type),   &resultLen, &errInfo);
-    RfcGetString(returnStruct, cU("MESSAGE"), ret_msg,  sizeofU(ret_msg),    &resultLen, &errInfo);
+    RfcGetString(returnStruct, cU("TYPE"),    ret_type, sizeofU(ret_type),  &typeLen, &errInfo);
+    RfcGetString(returnStruct, cU("MESSAGE"), ret_msg,  sizeofU(ret_msg),   &msgLen,  &errInfo);
 
-    string type_utf8 = sapUcToUtf8(ret_type, errInfo);
-    string msg_utf8  = sapUcToUtf8(ret_msg,  errInfo);
+    string type_str = ucToStr(ret_type, typeLen);
+    string msg_str  = ucToStr(ret_msg,  msgLen);
 
     RfcDestroyFunction(handle, &errInfo);
 
-    if (type_utf8 == "E" || type_utf8 == "A") {
-        throw std::runtime_error(string("BAPI_XMI_LOGON (") + iface + ") failed: " + msg_utf8);
+    if (type_str == "E" || type_str == "A") {
+        throw std::runtime_error(string("BAPI_XMI_LOGON (") + iface + ") failed: " + msg_str);
     }
 
     vlog(verbose, string("XMI logon ") + iface + " OK");
@@ -183,9 +196,7 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
             unsigned len = 0;
             RfcGetString(table2, fld, buf, sizeofU(buf), &len, &e);
             if (e.code != RFC_OK || len == 0) return "";
-            string s = sapUcToUtf8(buf, errInfo);
-            while (!s.empty() && s.back() == ' ') s.pop_back();
-            return s;
+            return ucToStr(buf, len);
         };
 
         // Load all rows into memory so we can walk parent chains
@@ -281,11 +292,11 @@ static string resolveMtClass(
     RfcInvoke(conn, handle, &errInfo);
 
     SAP_UC message_mtclass[9999] = iU("");
+    unsigned mtclass_len = 0;
     RfcGetStructure(handle, cU("TID"), &outTid, &errInfo);
-    RfcGetString(outTid, cU("MTCLASS"), message_mtclass, sizeofU(message_mtclass), nullptr, &errInfo);
+    RfcGetString(outTid, cU("MTCLASS"), message_mtclass, sizeofU(message_mtclass), &mtclass_len, &errInfo);
 
-    string mtclass = sapUcToUtf8(message_mtclass, errInfo);
-    if (mtclass.size() > 3) mtclass = mtclass.substr(0, 3);
+    string mtclass = ucToStr(message_mtclass, min(mtclass_len, 3u));
 
     vlog(verbose, "TID resolved, MTCLASS=" + mtclass);
     RfcDestroyFunction(handle, &errInfo);
@@ -323,7 +334,6 @@ static string readMteValue(
     if (it == dispatch.end()) return {};
 
     const auto& cfg = it->second;
-    vlog(verbose, string("readMteValue: calling ") + sapUcToUtf8(cfg.bapi_name, errInfo));
     auto bapi = RfcGetFunctionDesc(conn, cfg.bapi_name, &errInfo);
     if (!bapi) return {};
     auto handle = RfcCreateFunction(bapi, &errInfo);
@@ -338,7 +348,7 @@ static string readMteValue(
     unsigned resultLen = 0;
     RfcGetStructure(handle, cU("RETURN"), &returnStruct, &errInfo);
     RfcGetString(returnStruct, cU("MESSAGE"), return_msg, sizeofU(return_msg), &resultLen, &errInfo);
-    string err_utf8 = sapUcToUtf8(return_msg, errInfo);
+    string err_utf8 = ucToStr(return_msg, resultLen);
     if (!err_utf8.empty()) {
         cout << "Fehler: Monitor nicht definiert" << endl;
         RfcDestroyFunction(handle, &errInfo);
@@ -349,7 +359,7 @@ static string readMteValue(
     RfcGetStructure(handle, cfg.result_struct, &valueStruct, &errInfo);
     RfcGetString(valueStruct, cfg.result_field, message_buf, msg_buf_size, &resultLen, &errInfo);
 
-    string result = sapUcToUtf8(message_buf, errInfo);
+    string result = ucToStr(message_buf, resultLen);
     vlog(verbose, "MTE value=" + result);
     RfcDestroyFunction(handle, &errInfo);
     return result;
