@@ -200,7 +200,7 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         };
 
         // Load all rows, then use level-based path stack (nodes are in depth-first order)
-        struct TNode { string name, cls, sysid; int level; };
+        struct TNode { string name, cls, sysid, context, objname; int level; };
         vector<TNode> nodes;
         nodes.reserve(rowCount2);
         string sysid = p.sid;
@@ -208,10 +208,12 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         for (unsigned j = 0; j < rowCount2; ++j) {
             RfcMoveTo(table2, j, &errInfo);
             TNode n;
-            n.name  = readField(cU("MTNAMESHRT"));
-            n.cls   = readField(cU("MTCLASS"));
+            n.name    = readField(cU("MTNAMESHRT"));
+            n.cls     = readField(cU("MTCLASS"));
             if (n.cls.size() > 3) n.cls = n.cls.substr(0, 3);
-            n.sysid = readField(cU("ALSYSID"));
+            n.sysid   = readField(cU("ALSYSID"));
+            n.context = readField(cU("CUSGRPNAME"));
+            n.objname = readField(cU("OBJECTNAME"));
             string lvl = readField(cU("ALLEVINTRE"));
             n.level = lvl.empty() ? 1 : [](const string& s) {
                 try { return stoi(s); } catch (...) { return 1; }
@@ -222,6 +224,8 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
 
         // Display tree using a path stack — no parent-ID lookup needed because
         // BAPI_SYSTEM_MON_GETTREE returns nodes in depth-first traversal order.
+        // For leaf nodes: prefer CUSGRPNAME/OBJECTNAME (exact BAPI params) over
+        // the full stack path when available.
         vector<string> pathStack;
         for (const TNode& n : nodes) {
             string indent((n.level > 0 ? n.level - 1 : 0) * 2, ' ');
@@ -231,11 +235,18 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
                 pathStack.pop_back();
 
             if (LEAF_CLASSES.count(n.cls)) {
-                string path = sysid;
-                for (const auto& seg : pathStack) path += "\\" + seg;
-                path += "\\" + n.name;
+                string monitor_path;
+                if (!n.context.empty() && !n.objname.empty()) {
+                    // Best: use the exact BAPI_SYSTEM_MTE_GETTIDBYNAME triplet
+                    monitor_path = sysid + "\\" + n.context + "\\" + n.objname + "\\" + n.name;
+                } else {
+                    // Fallback: full stack path (user may need to adjust)
+                    monitor_path = sysid;
+                    for (const auto& seg : pathStack) monitor_path += "\\" + seg;
+                    monitor_path += "\\" + n.name;
+                }
                 cout << "  |  " << indent << "-> " << n.name << "  (class=" << n.cls << ")\n";
-                cout << "  |  " << indent << "   -monitor='" << path << "'\n";
+                cout << "  |  " << indent << "   -monitor='" << monitor_path << "'\n";
             } else {
                 cout << "  |  " << indent << n.name << "\n";
                 if (!n.name.empty()) pathStack.push_back(n.name);
@@ -250,16 +261,20 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
 
 // ----------------------------------------------------------------------------
 /**
- * Helper commun à -check et -checkall : résout le TID d'un MTE et retourne
- * sa classe MTCLASS sous forme de string UTF-8 (ex: "100", "101", "102", "111").
+ * Helper commun à -check et -checkall : résout le TID d'un MTE.
+ * Retourne le RFC_FUNCTION_HANDLE de l'invocation GETTIDBYNAME — l'appelant
+ * DOIT appeler RfcDestroyFunction(returned_handle) APRÈS avoir fini avec outTid,
+ * car outTid est un pointeur dans la mémoire du handle (use-after-free sinon).
+ * outMtclass reçoit la classe MTCLASS ("100", "101", "102", "111" …).
  */
-static string resolveMtClass(
+static RFC_FUNCTION_HANDLE resolveMtClass(
     RFC_CONNECTION_HANDLE conn,
     const SAP_UC* context_name,
     const SAP_UC* mte_name,
     const SAP_UC* object_name,
     const SAP_UC* system_id,
     RFC_STRUCTURE_HANDLE& outTid,
+    string& outMtclass,
     RFC_ERROR_INFO& errInfo,
     bool verbose = false)
 {
@@ -281,11 +296,11 @@ static string resolveMtClass(
     RfcGetStructure(handle, cU("TID"), &outTid, &errInfo);
     RfcGetString(outTid, cU("MTCLASS"), message_mtclass, sizeofU(message_mtclass), &mtclass_len, &errInfo);
 
-    string mtclass = ucToStr(message_mtclass, min(mtclass_len, 3u));
+    outMtclass = ucToStr(message_mtclass, min(mtclass_len, 3u));
+    vlog(verbose, "TID resolved, MTCLASS=" + outMtclass);
 
-    vlog(verbose, "TID resolved, MTCLASS=" + mtclass);
-    RfcDestroyFunction(handle, &errInfo);
-    return mtclass;
+    // Caller must RfcDestroyFunction(handle) AFTER readMteValue — outTid lives in handle.
+    return handle;
 }
 
 /**
@@ -381,12 +396,14 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
     vlog(p.verbose, "sid=" + sap_sid + " context=" + context_name + " object=" + object_name + " mte=" + mte_name);
 
     RFC_STRUCTURE_HANDLE tid;
-    string mtclass = resolveMtClass(conn,
+    string mtclass;
+    auto tid_fn = resolveMtClass(conn,
         uc_ctx.get(), uc_mte.get(), uc_obj.get(), uc_sid.get(),
-        tid, errInfo, p.verbose);
+        tid, mtclass, errInfo, p.verbose);
 
     SAP_UC message[8192] = iU("");
     string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
+    RfcDestroyFunction(tid_fn, &errInfo);  // safe — readMteValue is done with tid
 
     if (value.empty()) {
         RfcCloseConnection(conn, &errInfo);
@@ -469,13 +486,15 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         printfU(cU("%s\\%s\\%s\\%s "), system_id, context_name, object_name, mte_name);
 
         RFC_STRUCTURE_HANDLE tid;
-        string mtclass = resolveMtClass(conn,
+        string mtclass;
+        auto tid_fn = resolveMtClass(conn,
             context_name, mte_name, object_name, system_id,
-            tid, errInfo, p.verbose);
+            tid, mtclass, errInfo, p.verbose);
 
-        if (mtclass == "050") { cout << "###" << endl; continue; }
+        if (mtclass == "050") { RfcDestroyFunction(tid_fn, &errInfo); cout << "###" << endl; continue; }
 
         string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
+        RfcDestroyFunction(tid_fn, &errInfo);  // safe — readMteValue done with tid
         if (!value.empty()) printfU(cU(" %s\n"), message);
     }
 
@@ -526,19 +545,20 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
 
     for (unsigned i = 0; i < rowCount; ++i) {
         RfcMoveTo(table, i, &errInfo);
-        RfcGetString(table, cU("JOBNAME"),  job_name,      sizeofU(job_name),      nullptr, &errInfo);
-        RfcGetString(table, cU("JOBCOUNT"), job_count,     sizeofU(job_count),     nullptr, &errInfo);
-        RfcGetString(table, cU("STATUS"),   job_status,    sizeofU(job_status),    nullptr, &errInfo);
-        RfcGetString(table, cU("ENDDATE"),  job_end_datum, sizeofU(job_end_datum), nullptr, &errInfo);
-        RfcGetString(table, cU("ENDTIME"),  job_end_time,  sizeofU(job_end_time),  nullptr, &errInfo);
+        unsigned len_name = 0, len_count = 0, len_status = 0, len_datum = 0, len_time = 0;
+        RfcGetString(table, cU("JOBNAME"),  job_name,      sizeofU(job_name),      &len_name,   &errInfo);
+        RfcGetString(table, cU("JOBCOUNT"), job_count,     sizeofU(job_count),     &len_count,  &errInfo);
+        RfcGetString(table, cU("STATUS"),   job_status,    sizeofU(job_status),    &len_status, &errInfo);
+        RfcGetString(table, cU("ENDDATE"),  job_end_datum, sizeofU(job_end_datum), &len_datum,  &errInfo);
+        RfcGetString(table, cU("ENDTIME"),  job_end_time,  sizeofU(job_end_time),  &len_time,   &errInfo);
 
-        string status = sapUcToUtf8(job_status, errInfo);
+        string status = ucToStr(job_status,    len_status);
         if (status.find('A') == string::npos) continue;
 
-        string name   = sapUcToUtf8(job_name,      errInfo);
-        string count  = sapUcToUtf8(job_count,     errInfo);
-        string datum  = sapUcToUtf8(job_end_datum, errInfo);
-        string uhrzeit= sapUcToUtf8(job_end_time,  errInfo);
+        string name   = ucToStr(job_name,      len_name);
+        string count  = ucToStr(job_count,     len_count);
+        string datum  = ucToStr(job_end_datum, len_datum);
+        string uhrzeit= ucToStr(job_end_time,  len_time);
 
         job_name_und_job_count_array.push_back(
             name + ";;" + count + "##" + datum + ";#;" + uhrzeit
@@ -633,8 +653,9 @@ int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_I
     struct DumpEntry { string date, time, user, severity, host, field1, field4, field9; };
     auto readField = [&](RFC_TABLE_HANDLE t, const SAP_UC* field) -> string {
         SAP_UC buf[4096] = iU("");
-        RfcGetString(t, field, buf, sizeofU(buf), nullptr, &errInfo);
-        return sapUcToUtf8(buf, errInfo);
+        unsigned len = 0;
+        RfcGetString(t, field, buf, sizeofU(buf), &len, &errInfo);
+        return ucToStr(buf, len);
     };
 
     vector<string> abap_dumps;
