@@ -199,9 +199,8 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
             return ucToStr(buf, len);
         };
 
-        // Load all rows into memory so we can walk parent chains
-        // Use string keys for ALTREENUM/ALPARINTRE — values can exceed int range
-        struct TNode { string name, cls, sysid, id_s, parent_s; int level; };
+        // Load all rows, then use level-based path stack (nodes are in depth-first order)
+        struct TNode { string name, cls, sysid; int level; };
         vector<TNode> nodes;
         nodes.reserve(rowCount2);
         string sysid = p.sid;
@@ -209,52 +208,37 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
         for (unsigned j = 0; j < rowCount2; ++j) {
             RfcMoveTo(table2, j, &errInfo);
             TNode n;
-            n.name     = readField(cU("MTNAMESHRT"));
-            n.cls      = readField(cU("MTCLASS"));
+            n.name  = readField(cU("MTNAMESHRT"));
+            n.cls   = readField(cU("MTCLASS"));
             if (n.cls.size() > 3) n.cls = n.cls.substr(0, 3);
-            n.sysid    = readField(cU("ALSYSID"));
-            n.id_s     = readField(cU("ALTREENUM"));
-            n.parent_s = readField(cU("ALPARINTRE"));
+            n.sysid = readField(cU("ALSYSID"));
             string lvl = readField(cU("ALLEVINTRE"));
-            n.level    = lvl.empty() ? 1 : [](const string& s) {
+            n.level = lvl.empty() ? 1 : [](const string& s) {
                 try { return stoi(s); } catch (...) { return 1; }
             }(lvl);
             if (!n.sysid.empty()) sysid = n.sysid;
             nodes.push_back(n);
         }
 
-        // Build id → index lookup using string keys
-        map<string, size_t> byId;
-        for (size_t idx = 0; idx < nodes.size(); ++idx)
-            if (!nodes[idx].id_s.empty()) byId[nodes[idx].id_s] = idx;
-
-        // Build full path for a node by walking up the parent chain
-        auto buildPath = [&](size_t startIdx) -> string {
-            vector<string> parts;
-            size_t idx = startIdx;
-            for (int guard = 0; guard < 64; ++guard) {
-                parts.push_back(nodes[idx].name);
-                const string& par = nodes[idx].parent_s;
-                if (par.empty() || par == "0") break;
-                auto it = byId.find(par);
-                if (it == byId.end()) break;
-                idx = it->second;
-            }
-            reverse(parts.begin(), parts.end());
-            string path = sysid;
-            for (const auto& seg : parts) path += "\\" + seg;
-            return path;
-        };
-
-        // Display tree: indent by level, show -monitor= path for leaf nodes
-        for (size_t idx = 0; idx < nodes.size(); ++idx) {
-            const TNode& n = nodes[idx];
+        // Display tree using a path stack — no parent-ID lookup needed because
+        // BAPI_SYSTEM_MON_GETTREE returns nodes in depth-first traversal order.
+        vector<string> pathStack;
+        for (const TNode& n : nodes) {
             string indent((n.level > 0 ? n.level - 1 : 0) * 2, ' ');
+
+            // Pop stack back to the parent level
+            while ((int)pathStack.size() >= n.level)
+                pathStack.pop_back();
+
             if (LEAF_CLASSES.count(n.cls)) {
+                string path = sysid;
+                for (const auto& seg : pathStack) path += "\\" + seg;
+                path += "\\" + n.name;
                 cout << "  |  " << indent << "-> " << n.name << "  (class=" << n.cls << ")\n";
-                cout << "  |  " << indent << "   -monitor='" << buildPath(idx) << "'\n";
+                cout << "  |  " << indent << "   -monitor='" << path << "'\n";
             } else {
                 cout << "  |  " << indent << n.name << "\n";
+                if (!n.name.empty()) pathStack.push_back(n.name);
             }
         }
         cout << "\n";
