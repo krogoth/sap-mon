@@ -448,10 +448,15 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
             int warn_int     = stoi(p.warn);
             int critical_int = stoi(p.critical);
 
-            if (val_int >= warn_int)     { cout << "WARNUNG"   << endl; return 1; }
-            if (val_int >= critical_int) { cout << "CRITICAL"  << endl; return 2; }
+            // Critical must be checked first — warn threshold is always lower.
+            if (val_int >= critical_int) { cout << "CRITICAL" << endl; return 2; }
+            if (val_int >= warn_int)     { cout << "WARNING"  << endl; return 1; }
+        } catch (const std::invalid_argument&) {
+            // Non-numeric MTE value (e.g. MTCLASS=102 status message):
+            // any non-empty message means an alert condition → CRITICAL.
+            return 2;
         } catch (const std::exception& e) {
-            cerr << "handle_check: non-integer warn/critical value: " << e.what() << endl;
+            cerr << "handle_check: warn/critical comparison error: " << e.what() << endl;
             return 3;
         }
     }
