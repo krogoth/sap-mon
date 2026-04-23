@@ -530,10 +530,14 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
         }
     } else {
         // No thresholds: use SAP's CCMS alert color (ALCOLOR) for the exit code.
+        // Fallback when ALCOLOR is unavailable: for status MTEs (101/102) any
+        // non-empty message is an alert condition (same logic as -checkall).
         int color = fetchAlcolor(conn, context_name, object_name, mte_name, errInfo, p.verbose);
         int rc_out = 0;
         if      (color == 3) rc_out = 2;  // red    → CRITICAL
         else if (color == 2) rc_out = 1;  // yellow → WARNING
+        else if (color < 0 && (mtclass == "101" || mtclass == "102") && !value.empty())
+            rc_out = 2;  // status MTE with message but no ALCOLOR → CRITICAL
 
         if      (rc_out == 2) { cout << "CRITICAL - " << value << endl; return 2; }
         else if (rc_out == 1) { cout << "WARNING - "  << value << endl; return 1; }
