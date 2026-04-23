@@ -61,13 +61,23 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
 
         SAP_UC certificate_in_hex[32768] = iU("");
 
+        cerr << "[ssl] context=" << context_list[i] << " applic=" << applic_list[i]
+             << " rowCount=" << rowCount << " rc=" << errorInfo.code << "\n";
+
         for (unsigned j = 0; j < rowCount; ++j) {
             RfcMoveTo(table, j, NULL);
             unsigned hex_len = 0;
-            RfcGetString(table, cU("CERTIFICATE"), certificate_in_hex, sizeofU(certificate_in_hex), &hex_len, &errorInfo);
+            RFC_RC rc_get = RfcGetString(table, cU("CERTIFICATE"), certificate_in_hex,
+                                         sizeofU(certificate_in_hex), &hex_len, &errorInfo);
 
-            // sapUcToUtf8 uses strlenU internally; hex_len is available for debugging.
             string cert_hex = sapUcToUtf8(certificate_in_hex, errorInfo);
+
+            cerr << "[ssl]   row " << j
+                 << " RfcGetString rc=" << rc_get
+                 << " hex_len=" << hex_len
+                 << " sapUcToUtf8.size()=" << cert_hex.size()
+                 << " first='" << cert_hex.substr(0, 16) << "'\n";
+
             certlist.push_back(cert_hex + ";;;" + context_list[i] + ";;;" + applic_list[i]);
         }
     }

@@ -31,8 +31,15 @@ vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_ch
         size_t sep = certlist_array[i].find(";;;");
         string cert_hex = certlist_array[i].substr(0, sep);
 
+        cerr << "read_cert_infos: entry " << i
+             << " cert_hex.size()=" << cert_hex.size()
+             << " first_chars='" << cert_hex.substr(0, 20) << "'"
+             << " sep=" << sep << "\n";
+
         if (cert_hex.empty() || cert_hex.size() % 2 != 0) {
-            cerr << "read_cert_infos: invalid hex data for entry " << i << endl;
+            cerr << "read_cert_infos: invalid hex data for entry " << i
+                 << " (empty=" << cert_hex.empty()
+                 << " odd=" << (cert_hex.size() % 2 != 0) << ")\n";
             continue;
         }
 
