@@ -1,6 +1,7 @@
 A small monitoring tool to check sap base health.
-The tool reads the SAP CCMS values and sapcontrol (J2EE) values and check it to your defined thresholds.
-The exit codes are best uses with Icinga / Nagios Monitoring.
+The tool reads the SAP CCMS values and sapcontrol (J2EE) values and checks them against your defined thresholds.
+When no thresholds are given, the exit code is derived directly from SAP's CCMS alert color (1=green/OK, 2=yellow/WARNING, 3=red/CRITICAL).
+The exit codes follow Nagios/Icinga convention (0=OK, 1=WARNING, 2=CRITICAL) and are best used with Icinga / Nagios monitoring.
 It based on the SAP RFC SDK 7.50 for the SAP communication and SOAP/XML data structures for SAP communications.
 First download and configure SAP RFC SDK https://support.sap.com/en/product/connectors/nwrfcsdk.html .
 Than use simple "make" for comipling (pay attention to the library path in the Makefile).
@@ -80,16 +81,20 @@ Usage:
 #Show the CCMS available monitors
 ./sap_mon -show -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100
 
-#Check the netiry CCMS Monitor Set
-./sap_mon -checkall -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor='SAP CCMS Monitor Templates\Buffers' 
+#Check all MTEs under a monitor path (format: SID\MTMCNAME[\OBJECTNAME])
+#Exit code is based on ALCOLOR from BAPI_SYSTEM_MON_GETTREE (same as RZ20 traffic light)
+./sap_mon -checkall -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor='AL1\saplnx_AL1_01\Background'
 
 #CCMS Status Attribute
 ./sap_mon -check -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor='AL1\saplnx_AL1_01\DatabaseClient\DBConnection\DBServer'
 
-#CCMS Performance attribute #without warn and critical
+#CCMS Performance attribute without thresholds
+#Exit code comes from the BAPI alert color (LASTALSTAT) — reflects live SAP alert state
 ./sap_mon -check -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor='AL1\DB2 Universal Database for NT/UNIX\Space management\database related file systems\database directory'
 
-#CCMS Performance attribute #with warn and critical
+#CCMS Performance attribute with thresholds
+#Threshold direction is inferred: critical > warn means higher is worse (e.g. CPU, fault counts)
+#                                 critical < warn means lower  is worse (e.g. free space, free memory)
 ./sap_mon -check -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor='AL1\DB2 Universal Database for NT/UNIX\Space management\database related file systems\database directory' -warn=39 -critical=45
 
 #CCMS Log Attribute
