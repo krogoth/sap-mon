@@ -499,6 +499,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
     static const set<string> LEAF_CLASSES = {"100", "101", "102", "111"};
     SAP_UC message[8192] = iU("");
     int worst_rc = 0;
+    set<string> seen;  // deduplicate MTEs that appear in multiple monitor sets
 
     for (unsigned i = 0; i < monCount; ++i) {
         RfcMoveTo(monTable, i, &errInfo);
@@ -547,6 +548,9 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             if (s_mte.empty() || !LEAF_CLASSES.count(s_cls)) continue;
             if (!mtmc_filter.empty() && s_mtmc != mtmc_filter) continue;
             if (!obj_filter.empty()  && s_obj  != obj_filter)  continue;
+
+            string key = s_sys + "\\" + s_mtmc + "\\" + s_obj + "\\" + s_mte;
+            if (!seen.insert(key).second) continue;  // already processed
 
             auto uc_sys2  = utf8ToSapUc(s_sys,  errInfo);
             auto uc_mtmc2 = utf8ToSapUc(s_mtmc, errInfo);
