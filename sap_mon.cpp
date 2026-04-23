@@ -401,6 +401,10 @@ static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
     vlog(verbose, "fetchAlcolor: looking for mtmc='" + mtmc + "' obj='" + obj + "' mte='" + mte + "'");
 
     RFC_ERROR_INFO localErr = {};
+    // Re-logon: the XAL session opened at the start of handle_check is consumed
+    // by the preceding GETTIDBYNAME / GET*VALUE calls, so GETLIST returns 0 sets
+    // without a fresh logon.
+    xmiLogon(conn, "XAL", localErr, verbose);
     auto list_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &localErr);
     vlog(verbose, string("fetchAlcolor: GetFunctionDesc GETLIST ") + (list_desc ? "OK" : "FAILED code=" + to_string(localErr.code)));
     if (!list_desc) return -1;
