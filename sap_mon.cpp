@@ -738,13 +738,12 @@ int handle_aborted_job(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR
 
     if (aborted_jobs.empty()) return 0;
 
-    cout << "CRITICAL -\t";
+    cout << "CRITICAL - " << aborted_jobs.size() << " aborted job(s)\n";
     for (const auto& job : aborted_jobs) {
         string out = job;
         replace(out.begin(), out.end(), ';', '#');
-        cout << out << "\t";
+        cout << out << "\n";
     }
-    cout << endl;
     return 2;
 }
 
