@@ -400,6 +400,9 @@ static string readMteValue(
 
 
 // ----------------------------------------------------------------------------
+// Alert color source: the GET*VALUE BAPIs return the color as an INT4 field
+// in their result structure (LASTALSTAT for MTCLASS 100, VALUEFLTRD for 101,
+// SMSGVALUE for 102).  This reflects the live alert state at fetch time.
 int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
     xmiLogon(conn, "XAL", errInfo, p.verbose);
 
@@ -491,6 +494,10 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
 }
 
 // ----------------------------------------------------------------------------
+// Alert color source: ALCOLOR field in TREE_NODES returned by
+// BAPI_SYSTEM_MON_GETTREE.  This is the pre-computed traffic-light color
+// stored in the monitor tree (same value shown in RZ20), updated by the CCMS
+// background collector — may lag slightly behind the live alert state.
 int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
     xmiLogon(conn, "XAL", errInfo, p.verbose);
 
