@@ -87,41 +87,33 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
         for (unsigned j = 0; j < rowCount; ++j) {
             RfcMoveTo(table, j, &errorInfo);
 
-            string cert_hex;
-
-            // Attempt 1: XSTRING getter — raw bytes, we hex-encode them
-            RFC_BYTE cert_buf[65536] = {};
-            unsigned cert_len = 0;
-            RFC_RC rc_get = RfcGetXString(table, cU("TABLE_LINE"),
-                                          cert_buf, sizeof(cert_buf),
-                                          &cert_len, &errorInfo);
-            if (rc_get == RFC_OK && cert_len > 0) {
-                static const char hc[] = "0123456789ABCDEF";
-                cert_hex.reserve(cert_len * 2);
-                for (unsigned k = 0; k < cert_len; ++k) {
-                    cert_hex += hc[(cert_buf[k] >> 4) & 0xF];
-                    cert_hex += hc[ cert_buf[k]       & 0xF];
-                }
-                cerr << "[ssl]   row " << j << " XString cert_len=" << cert_len
-                     << " first='" << cert_hex.substr(0, 16) << "'\n";
-            } else {
-                // Attempt 2: String getter — SDK may return RAWSTRING as uppercase hex
-                SAP_UC str_buf[32768] = iU("");
-                unsigned str_len = 0;
-                RFC_RC rc_str = RfcGetString(table, cU("TABLE_LINE"),
-                                             str_buf, sizeofU(str_buf), &str_len, &errorInfo);
-                if (rc_str == RFC_OK && str_len > 0) {
-                    cert_hex = sapUcToUtf8(str_buf, errorInfo);
-                    cerr << "[ssl]   row " << j << " GetString str_len=" << str_len
-                         << " hex.size()=" << cert_hex.size()
-                         << " first='" << cert_hex.substr(0, 16) << "'\n";
-                } else {
-                    cerr << "[ssl]   row " << j
-                         << " XString rc=" << rc_get << " String rc=" << rc_str << "\n";
-                }
+            RFC_STRUCTURE_HANDLE row = RfcGetCurrentRow(table, &errorInfo);
+            if (!row) {
+                cerr << "[ssl]   row " << j << " RfcGetCurrentRow failed rc=" << errorInfo.code << "\n";
+                continue;
             }
 
-            if (!cert_hex.empty())
+            RFC_BYTE cert_buf[65536] = {};
+            unsigned cert_len = 0;
+            RFC_RC rc_get = RfcGetXString(row, cU("TABLE_LINE"),
+                                          cert_buf, sizeof(cert_buf),
+                                          &cert_len, &errorInfo);
+
+            // Hex-encode raw DER bytes to uppercase ASCII (2 chars per byte)
+            static const char hex_chars[] = "0123456789ABCDEF";
+            string cert_hex;
+            cert_hex.reserve(cert_len * 2);
+            for (unsigned k = 0; k < cert_len; ++k) {
+                cert_hex += hex_chars[(cert_buf[k] >> 4) & 0xF];
+                cert_hex += hex_chars[ cert_buf[k]       & 0xF];
+            }
+
+            cerr << "[ssl]   row " << j
+                 << " rc=" << rc_get
+                 << " cert_len=" << cert_len
+                 << " first='" << cert_hex.substr(0, 16) << "'\n";
+
+            if (rc_get == RFC_OK && cert_len > 0)
                 certlist.push_back(cert_hex + ";;;" + context_list[i] + ";;;" + applic_list[i]);
         }
     }
