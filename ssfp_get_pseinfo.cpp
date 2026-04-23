@@ -34,31 +34,6 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
     }
     RFC_FUNCTION_HANDLE rfc_handle = RfcCreateFunction(ccms_bapi_handle, &errorInfo);
 
-    // Inspect CERTIFICATE field type once, so we know which getter to use
-    unsigned cert_field_bytes = 0;
-    {
-        RFC_PARAMETER_DESC paramDesc;
-        memset(&paramDesc, 0, sizeof(paramDesc));
-        RFC_RC rc_pd = RfcGetParameterDescByName(ccms_bapi_handle, cU("CERTIFICATELIST"), &paramDesc, &errorInfo);
-        if (rc_pd == RFC_OK && paramDesc.typeDescHandle) {
-            RFC_FIELD_DESC fieldDesc;
-            memset(&fieldDesc, 0, sizeof(fieldDesc));
-            RFC_RC rc_fd = RfcGetFieldDescByName(paramDesc.typeDescHandle, cU("CERTIFICATE"), &fieldDesc, &errorInfo);
-            if (rc_fd == RFC_OK) {
-                cert_field_bytes = fieldDesc.nucLength;
-                cerr << "[ssl] CERTIFICATE field type=" << fieldDesc.type
-                     << " nucLength=" << fieldDesc.nucLength
-                     << " ucLength="  << fieldDesc.ucLength  << "\n";
-            } else {
-                cerr << "[ssl] RfcGetFieldDescByName CERTIFICATE rc=" << rc_fd
-                     << " msg='" << sapUcToUtf8(errorInfo.message, errorInfo) << "'\n";
-            }
-        } else {
-            cerr << "[ssl] RfcGetParameterDescByName CERTIFICATELIST rc=" << rc_pd
-                 << " msg='" << sapUcToUtf8(errorInfo.message, errorInfo) << "'\n";
-        }
-    }
-
     vector<string> context_list = {
         "PROG", "PROG", "SMIM", "SFA",  "SSFA", "SSFA",
         "SSLC", "SSLC", "WSSE", "WSSE", "WSSE", "SSLS"
@@ -79,6 +54,28 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
 
         RfcInvoke(conn, rfc_handle, &errorInfo);
 
+        // EXPORTING CERTIFICATE: the PSE own certificate (XSTRING)
+        {
+            RFC_BYTE cert_buf[65536] = {};
+            unsigned cert_len = 0;
+            RFC_RC rc = RfcGetXString(rfc_handle, cU("CERTIFICATE"),
+                                      cert_buf, sizeof(cert_buf), &cert_len, &errorInfo);
+            cerr << "[ssl] context=" << context_list[i] << " applic=" << applic_list[i]
+                 << " own-cert rc=" << rc << " cert_len=" << cert_len << "\n";
+            if (rc == RFC_OK && cert_len > 0) {
+                static const char hc[] = "0123456789ABCDEF";
+                string cert_hex;
+                cert_hex.reserve(cert_len * 2);
+                for (unsigned k = 0; k < cert_len; ++k) {
+                    cert_hex += hc[(cert_buf[k] >> 4) & 0xF];
+                    cert_hex += hc[ cert_buf[k]       & 0xF];
+                }
+                certlist.push_back(cert_hex + ";;;" + context_list[i] + ";;;" + applic_list[i]);
+            }
+        }
+
+        // EXPORTING CERTIFICATELIST: table of RAWSTRING blobs (SSFBINTAB)
+        // Each row IS the certificate — accessed via implicit field TABLE_LINE
         unsigned rowCount = 0;
         RFC_TABLE_HANDLE table;
         RfcGetTable(rfc_handle, cU("CERTIFICATELIST"), &table, &errorInfo);
@@ -88,31 +85,13 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
              << " rowCount=" << rowCount << " rc=" << errorInfo.code << "\n";
 
         for (unsigned j = 0; j < rowCount; ++j) {
-            RfcMoveTo(table, j, NULL);
+            RfcMoveTo(table, j, &errorInfo);
 
             RFC_BYTE cert_buf[65536] = {};
             unsigned cert_len = 0;
-
-            // Try XSTRING (variable-length raw) first
-            RFC_RC rc_get = RfcGetXString(table, cU("CERTIFICATE"),
+            RFC_RC rc_get = RfcGetXString(table, cU("TABLE_LINE"),
                                           cert_buf, sizeof(cert_buf),
                                           &cert_len, &errorInfo);
-
-            if (rc_get != RFC_OK) {
-                cerr << "[ssl]   row " << j << " RfcGetXString rc=" << rc_get
-                     << " msg='" << sapUcToUtf8(errorInfo.message, errorInfo) << "'\n";
-                // Field may be type X (fixed-length raw bytes) — try RfcGetBytes
-                unsigned use_len = (cert_field_bytes > 0 && cert_field_bytes <= sizeof(cert_buf))
-                                   ? cert_field_bytes : sizeof(cert_buf);
-                rc_get = RfcGetBytes(table, cU("CERTIFICATE"), cert_buf, use_len, &errorInfo);
-                if (rc_get == RFC_OK) {
-                    cert_len = use_len;
-                    cerr << "[ssl]   row " << j << " RfcGetBytes rc=OK cert_len=" << cert_len << "\n";
-                } else {
-                    cerr << "[ssl]   row " << j << " RfcGetBytes rc=" << rc_get
-                         << " msg='" << sapUcToUtf8(errorInfo.message, errorInfo) << "'\n";
-                }
-            }
 
             // Hex-encode raw DER bytes to uppercase ASCII (2 chars per byte)
             static const char hex_chars[] = "0123456789ABCDEF";
@@ -124,11 +103,12 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
             }
 
             cerr << "[ssl]   row " << j
+                 << " rc=" << rc_get
                  << " cert_len=" << cert_len
-                 << " cert_hex.size()=" << cert_hex.size()
                  << " first='" << cert_hex.substr(0, 16) << "'\n";
 
-            certlist.push_back(cert_hex + ";;;" + context_list[i] + ";;;" + applic_list[i]);
+            if (rc_get == RFC_OK && cert_len > 0)
+                certlist.push_back(cert_hex + ";;;" + context_list[i] + ";;;" + applic_list[i]);
         }
     }
 
