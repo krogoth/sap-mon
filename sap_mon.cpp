@@ -432,18 +432,29 @@ static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
 
         for (unsigned j = 0; j < rowCount; ++j) {
             RfcMoveTo(table, j, &errInfo);
-            SAP_UC mtmc_buf[4096]=iU(""), obj_buf[4096]=iU(""), mte_buf[4096]=iU("");
-            SAP_UC alcolor_buf[8]=iU("");
-            unsigned lm=0, lo=0, lt=0, lc=0;
-            RfcGetString(table, cU("MTMCNAME"),  mtmc_buf, sizeofU(mtmc_buf), &lm, &errInfo);
-            RfcGetString(table, cU("OBJECTNAME"),obj_buf,  sizeofU(obj_buf),  &lo, &errInfo);
-            RfcGetString(table, cU("MTNAMESHRT"),mte_buf,  sizeofU(mte_buf),  &lt, &errInfo);
+            SAP_UC sys_buf[256]=iU(""), mtmc_buf[4096]=iU(""), obj_buf[4096]=iU(""), mte_buf[4096]=iU("");
+            SAP_UC cls_buf[16]=iU(""), alcolor_buf[8]=iU("");
+            unsigned ls=0, lm=0, lo=0, lt=0, lcls=0, lc=0;
+            RfcGetString(table, cU("MTSYSID"),   sys_buf,  sizeofU(sys_buf),  &ls,   &errInfo);
+            RfcGetString(table, cU("MTMCNAME"),  mtmc_buf, sizeofU(mtmc_buf), &lm,   &errInfo);
+            RfcGetString(table, cU("OBJECTNAME"),obj_buf,  sizeofU(obj_buf),  &lo,   &errInfo);
+            RfcGetString(table, cU("MTNAMESHRT"),mte_buf,  sizeofU(mte_buf),  &lt,   &errInfo);
+            RfcGetString(table, cU("MTCLASS"),   cls_buf,  sizeofU(cls_buf),  &lcls, &errInfo);
             RFC_ERROR_INFO colorErr = {};
             RfcGetString(table, cU("ALCOLOR"), alcolor_buf, sizeofU(alcolor_buf), &lc, &colorErr);
 
+            string s_sys  = ucToStr(sys_buf,  ls);
             string s_mtmc = ucToStr(mtmc_buf, lm);
             string s_obj  = ucToStr(obj_buf,  lo);
             string s_mte  = ucToStr(mte_buf,  lt);
+            string s_cls  = ucToStr(cls_buf,  min(lcls, 3u));
+
+            // Dump every leaf node so we can see what fields actually look like.
+            if (verbose && !s_mte.empty())
+                cerr << "[v]   fetchAlcolor scan: sys='" << s_sys << "' mtmc='" << s_mtmc
+                     << "' obj='" << s_obj << "' mte='" << s_mte
+                     << "' cls=" << s_cls << " alcolor='"
+                     << ucToStr(alcolor_buf, min(lc, 2u)) << "'\n";
 
             // Strict: MTMCNAME + OBJECTNAME + MTNAMESHRT all match.
             // Loose:  MTMCNAME is empty in the node (OS / grouping-parent case);
