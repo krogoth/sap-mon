@@ -333,20 +333,22 @@ static string readMteValue(
     SAP_UC* message_buf,
     unsigned msg_buf_size,
     RFC_ERROR_INFO& errInfo,
-    bool verbose = false)
+    bool verbose = false,
+    int* outColor = nullptr)
 {
     struct MteConfig {
         const SAP_UC* bapi_name;
-        const SAP_UC* result_struct;
+        const SAP_UC* result_struct;  // struct containing the text/value
         const SAP_UC* result_field;
+        const SAP_UC* color_struct;   // struct containing the alert color (may equal result_struct)
+        const SAP_UC* color_field;    // INT4: 1=green 2=yellow 3=red; nullptr if unavailable
     };
 
-    // Dispatch MTCLASS → BAPI + chemin de résultat
     static const map<string, MteConfig> dispatch = {
-        {"100", {cU("BAPI_SYSTEM_MTE_GETPERFCURVAL"), cU("CURRENT_VALUE"), cU("ALRELEVVAL")}},
-        {"101", {cU("BAPI_SYSTEM_MTE_GETMLCURVAL"),   cU("XMI_MSG_EXT"),   cU("MSG")}},
-        {"102", {cU("BAPI_SYSTEM_MTE_GETSMVALUE"),    cU("VALUE"),         cU("MSG")}},
-        {"111", {cU("BAPI_SYSTEM_MTE_GETTXTPROP"),    cU("PROPERTIES"),    cU("TEXT")}},
+        {"100", {cU("BAPI_SYSTEM_MTE_GETPERFCURVAL"), cU("CURRENT_VALUE"), cU("ALRELEVVAL"),  cU("CURRENT_VALUE"), cU("LASTALSTAT")}},
+        {"101", {cU("BAPI_SYSTEM_MTE_GETMLCURVAL"),   cU("XMI_MSG_EXT"),   cU("MSG"),         cU("CURRENT_VALUE"), cU("VALUEFLTRD")}},
+        {"102", {cU("BAPI_SYSTEM_MTE_GETSMVALUE"),    cU("VALUE"),         cU("MSG"),         cU("VALUE"),         cU("SMSGVALUE")}},
+        {"111", {cU("BAPI_SYSTEM_MTE_GETTXTPROP"),    cU("PROPERTIES"),    cU("TEXT"),        nullptr,             nullptr}},
     };
 
     auto it = dispatch.find(mtclass);
@@ -361,7 +363,6 @@ static string readMteValue(
     RfcSetStructure(handle, cU("TID"), tid, &errInfo);
     RfcInvoke(conn, handle, &errInfo);
 
-    // Vérification message d'erreur retour
     RFC_STRUCTURE_HANDLE returnStruct;
     SAP_UC return_msg[8192] = iU("");
     unsigned resultLen = 0;
@@ -377,129 +378,26 @@ static string readMteValue(
     RFC_STRUCTURE_HANDLE valueStruct;
     RfcGetStructure(handle, cfg.result_struct, &valueStruct, &errInfo);
     RfcGetString(valueStruct, cfg.result_field, message_buf, msg_buf_size, &resultLen, &errInfo);
-
     string result = ucToStr(message_buf, resultLen);
     vlog(verbose, "MTE value=" + result);
+
+    if (outColor && cfg.color_field) {
+        RFC_STRUCTURE_HANDLE colorStruct = valueStruct;
+        // For MTCLASS 101, color lives in CURRENT_VALUE, not XMI_MSG_EXT.
+        if (ucToStr(cfg.color_struct, strlenU(cfg.color_struct)) !=
+            ucToStr(cfg.result_struct, strlenU(cfg.result_struct)))
+            RfcGetStructure(handle, cfg.color_struct, &colorStruct, &errInfo);
+        RFC_INT colorVal = 0;
+        RfcGetInt(colorStruct, cfg.color_field, &colorVal, &errInfo);
+        *outColor = static_cast<int>(colorVal);
+        vlog(verbose, "MTE color=" + to_string(*outColor));
+    }
+
     RfcDestroyFunction(handle, &errInfo);
     return result;
 }
 
-// ----------------------------------------------------------------------------
-// Fetch the CCMS ALCOLOR for a specific MTE by scanning TREE_NODES across all
-// monitor sets.  Returns 1 (green/OK), 2 (yellow/WARNING), 3 (red/CRITICAL),
-// or -1 if the MTE was not found or the field was unavailable.
-//
-// Matching strategy:
-//   - Strict: MTSYSID + MTMCNAME + OBJECTNAME + MTNAMESHRT all match.
-//   - Loose:  MTSYSID + OBJECTNAME + MTNAMESHRT match and the node's MTMCNAME
-//             is empty (the node was placed in the tree by a grouping parent,
-//             not by its own monitoring concept — e.g. CPU, filesystem MTEs).
-static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
-    const string& mtmc, const string& obj, const string& mte,
-    RFC_ERROR_INFO& errInfo, bool verbose)
-{
-    vlog(verbose, "fetchAlcolor: looking for mtmc='" + mtmc + "' obj='" + obj + "' mte='" + mte + "'");
 
-    RFC_ERROR_INFO localErr = {};
-    // Re-logon: the XAL session opened at the start of handle_check is consumed
-    // by the preceding GETTIDBYNAME / GET*VALUE calls, so GETLIST returns 0 sets
-    // without a fresh logon.
-    xmiLogon(conn, "XAL", localErr, verbose);
-    auto list_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &localErr);
-    vlog(verbose, string("fetchAlcolor: GetFunctionDesc GETLIST ") + (list_desc ? "OK" : "FAILED code=" + to_string(localErr.code)));
-    if (!list_desc) return -1;
-
-    auto h_list = RfcCreateFunction(list_desc, &localErr);
-    vlog(verbose, string("fetchAlcolor: CreateFunction GETLIST ") + (h_list ? "OK" : "FAILED"));
-    if (!h_list) return -1;
-
-    RFC_RC rc = RfcInvoke(conn, h_list, &localErr);
-    vlog(verbose, string("fetchAlcolor: Invoke GETLIST rc=") + to_string(rc) +
-         (rc != RFC_OK ? " key=" + ucToStr(localErr.key, strlenU(localErr.key)) : ""));
-
-    RFC_TABLE_HANDLE ms_table; unsigned ms_count = 0;
-    RfcGetTable(h_list, cU("MON_SETS"), &ms_table, &localErr);
-    RfcGetRowCount(ms_table, &ms_count, &localErr);
-    vlog(verbose, "fetchAlcolor: GETLIST returned " + to_string(ms_count) + " monitor set(s)");
-
-    auto tree_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &localErr);
-    vlog(verbose, string("fetchAlcolor: GetFunctionDesc GETTREE ") + (tree_desc ? "OK" : "FAILED code=" + to_string(localErr.code)));
-    if (!tree_desc) { RfcDestroyFunction(h_list, &localErr); return -1; }
-
-    auto h_tree = RfcCreateFunction(tree_desc, &localErr);
-    vlog(verbose, string("fetchAlcolor: CreateFunction GETTREE ") + (h_tree ? "OK" : "FAILED"));
-    if (!h_tree) { RfcDestroyFunction(h_list, &localErr); return -1; }
-
-    RFC_STRUCTURE_HANDLE monName;
-    RfcGetStructure(h_tree, cU("MON_NAME"), &monName, &localErr);
-
-    int result_color = -1;
-
-    for (unsigned i = 0; i < ms_count && result_color < 0; ++i) {
-        RfcMoveTo(ms_table, i, &localErr);
-        SAP_UC ms[256]=iU(""), mn[256]=iU("");
-        unsigned lms=0, lmn=0;
-        RfcGetString(ms_table, cU("MS_NAME"),   ms, sizeofU(ms), &lms, &localErr);
-        RfcGetString(ms_table, cU("MONI_NAME"), mn, sizeofU(mn), &lmn, &localErr);
-
-        string s_ms = ucToStr(ms, lms);
-        string s_mn = ucToStr(mn, lmn);
-        vlog(verbose, "fetchAlcolor: invoking GETTREE for MS_NAME='" + s_ms + "' MONI_NAME='" + s_mn + "'");
-
-        RfcSetChars(monName, cU("MS_NAME"),   ms, strlenU(ms), &localErr);
-        RfcSetChars(monName, cU("MONI_NAME"), mn, strlenU(mn), &localErr);
-        RFC_RC rc_tree = RfcInvoke(conn, h_tree, &localErr);
-        vlog(verbose, string("fetchAlcolor: GETTREE rc=") + to_string(rc_tree) +
-             (rc_tree != RFC_OK ? " key=" + ucToStr(localErr.key, strlenU(localErr.key)) : ""));
-
-        RFC_TABLE_HANDLE table; unsigned rowCount = 0;
-        RfcGetTable(h_tree, cU("TREE_NODES"), &table, &localErr);
-        RfcGetRowCount(table, &rowCount, &localErr);
-        vlog(verbose, "fetchAlcolor: TREE_NODES rowCount=" + to_string(rowCount));
-
-        for (unsigned j = 0; j < rowCount; ++j) {
-            RfcMoveTo(table, j, &localErr);
-            SAP_UC sys_buf[256]=iU(""), mtmc_buf[4096]=iU(""), obj_buf[4096]=iU(""), mte_buf[4096]=iU("");
-            SAP_UC cls_buf[16]=iU(""), alcolor_buf[8]=iU("");
-            unsigned ls=0, lm=0, lo=0, lt=0, lcls=0, lc=0;
-            RfcGetString(table, cU("MTSYSID"),   sys_buf,  sizeofU(sys_buf),  &ls,   &localErr);
-            RfcGetString(table, cU("MTMCNAME"),  mtmc_buf, sizeofU(mtmc_buf), &lm,   &localErr);
-            RfcGetString(table, cU("OBJECTNAME"),obj_buf,  sizeofU(obj_buf),  &lo,   &localErr);
-            RfcGetString(table, cU("MTNAMESHRT"),mte_buf,  sizeofU(mte_buf),  &lt,   &localErr);
-            RfcGetString(table, cU("MTCLASS"),   cls_buf,  sizeofU(cls_buf),  &lcls, &localErr);
-            RFC_ERROR_INFO colorErr = {};
-            RfcGetString(table, cU("ALCOLOR"), alcolor_buf, sizeofU(alcolor_buf), &lc, &colorErr);
-
-            string s_sys  = ucToStr(sys_buf,  ls);
-            string s_mtmc = ucToStr(mtmc_buf, lm);
-            string s_obj  = ucToStr(obj_buf,  lo);
-            string s_mte  = ucToStr(mte_buf,  lt);
-            string s_cls  = ucToStr(cls_buf,  min(lcls, 3u));
-            string s_col  = (colorErr.code == RFC_OK) ? ucToStr(alcolor_buf, min(lc, 2u)) : "?";
-
-            if (verbose && !s_mte.empty())
-                cerr << "[v]   row " << j << ": sys='" << s_sys << "' mtmc='" << s_mtmc
-                     << "' obj='" << s_obj << "' mte='" << s_mte
-                     << "' cls=" << s_cls << " alcolor='" << s_col << "'\n";
-
-            bool match = (s_obj == obj) && (s_mte == mte) &&
-                         (s_mtmc == mtmc || s_mtmc.empty());
-            if (!match) continue;
-
-            vlog(verbose, "fetchAlcolor: MATCHED row " + to_string(j) +
-                 " mtmcname='" + s_mtmc + "' alcolor='" + s_col + "'");
-            if (colorErr.code == RFC_OK) {
-                if (!s_col.empty()) try { result_color = stoi(s_col); } catch (...) {}
-            }
-            break;
-        }
-    }
-
-    vlog(verbose, "fetchAlcolor: result_color=" + to_string(result_color));
-    RfcDestroyFunction(h_tree, &localErr);
-    RfcDestroyFunction(h_list, &localErr);
-    return result_color;
-}
 
 // ----------------------------------------------------------------------------
 int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
@@ -538,7 +436,8 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
         tid, mtclass, errInfo, p.verbose);
 
     SAP_UC message[8192] = iU("");
-    string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
+    int color = 0;
+    string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose, &color);
     RfcDestroyFunction(tid_fn, &errInfo);  // safe — readMteValue is done with tid
 
     if (value.empty()) {
@@ -546,7 +445,10 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
         exit(-1);
     }
 
-    // Comparaison warn/critical (mode -check uniquement, optionnel)
+    static const char* color_names[] = { "unknown", "green", "yellow", "red" };
+    const char* cname = (color >= 1 && color <= 3) ? color_names[color] : "unknown";
+    vlog(p.verbose, string("ALCOLOR=") + to_string(color) + " (" + cname + ")");
+
     if (!p.warn.empty() && !p.critical.empty()) {
         try {
             int val_int      = stoi(value);
@@ -569,28 +471,18 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
             else if (rc_out == 1) { cout << "WARNING - "  << value << endl; return 1; }
             else                  { cout << "OK - "       << value << endl; }
         } catch (const std::invalid_argument&) {
-            // Non-numeric MTE value (e.g. MTCLASS=102 status message):
-            // any non-empty message means an alert condition → CRITICAL.
-            cout << "CRITICAL - " << value << endl;
-            return 2;
+            // Non-numeric value with thresholds — use the BAPI alert color.
+            int rc_out = (color == 3) ? 2 : (color == 2) ? 1 : 0;
+            if      (rc_out == 2) { cout << "CRITICAL - " << value << endl; return 2; }
+            else if (rc_out == 1) { cout << "WARNING - "  << value << endl; return 1; }
+            else                  { cout << "OK - "       << value << endl; }
         } catch (const std::exception& e) {
             cerr << "handle_check: warn/critical comparison error: " << e.what() << endl;
             return 3;
         }
     } else {
-        // No thresholds: use SAP's CCMS alert color (ALCOLOR) for the exit code.
-        // Fallback when ALCOLOR is unavailable: for status MTEs (101/102) any
-        // non-empty message is an alert condition (same logic as -checkall).
-        int color = fetchAlcolor(conn, context_name, object_name, mte_name, errInfo, p.verbose);
-        static const char* color_names[] = { "unknown", "green", "yellow", "red" };
-        const char* cname = (color >= 1 && color <= 3) ? color_names[color] : "not found";
-        vlog(p.verbose, string("ALCOLOR=") + (color >= 0 ? to_string(color) : "-1") + " (" + cname + ")");
-        int rc_out = 0;
-        if      (color == 3) rc_out = 2;  // red    → CRITICAL
-        else if (color == 2) rc_out = 1;  // yellow → WARNING
-        else if (color < 0 && (mtclass == "101" || mtclass == "102") && !value.empty())
-            rc_out = 2;  // status MTE with message but no ALCOLOR → CRITICAL
-
+        // No thresholds: use the alert color returned by the BAPI directly.
+        int rc_out = (color == 3) ? 2 : (color == 2) ? 1 : 0;
         if      (rc_out == 2) { cout << "CRITICAL - " << value << endl; return 2; }
         else if (rc_out == 1) { cout << "WARNING - "  << value << endl; return 1; }
         else                  { cout << "OK - "       << value << endl; return 0; }
