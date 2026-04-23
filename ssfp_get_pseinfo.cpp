@@ -63,9 +63,10 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
 
         for (unsigned j = 0; j < rowCount; ++j) {
             RfcMoveTo(table, j, NULL);
-            // Field name is "CERTIFICATE" in RFC SSFP_GET_PSEINFO — verify against your SAP release if extraction fails
-            RfcGetString(table, cU("CERTIFICATE"), certificate_in_hex, sizeofU(certificate_in_hex), NULL, &errorInfo);
+            unsigned hex_len = 0;
+            RfcGetString(table, cU("CERTIFICATE"), certificate_in_hex, sizeofU(certificate_in_hex), &hex_len, &errorInfo);
 
+            // sapUcToUtf8 uses strlenU internally; hex_len is available for debugging.
             string cert_hex = sapUcToUtf8(certificate_in_hex, errorInfo);
             certlist.push_back(cert_hex + ";;;" + context_list[i] + ";;;" + applic_list[i]);
         }
