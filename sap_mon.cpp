@@ -385,6 +385,74 @@ static string readMteValue(
 }
 
 // ----------------------------------------------------------------------------
+// Fetch the CCMS ALCOLOR for a specific MTE by scanning TREE_NODES across all
+// monitor sets.  Returns 1 (green/OK), 2 (yellow/WARNING), 3 (red/CRITICAL),
+// or -1 if the MTE was not found or the field was unavailable.
+static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
+    const string& mtmc, const string& obj, const string& mte,
+    RFC_ERROR_INFO& errInfo, bool verbose)
+{
+    auto list_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
+    if (!list_desc) return -1;
+    auto h_list = RfcCreateFunction(list_desc, &errInfo);
+    RfcInvoke(conn, h_list, &errInfo);
+
+    RFC_TABLE_HANDLE ms_table; unsigned ms_count = 0;
+    RfcGetTable(h_list, cU("MON_SETS"), &ms_table, &errInfo);
+    RfcGetRowCount(ms_table, &ms_count, &errInfo);
+
+    auto tree_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
+    if (!tree_desc) { RfcDestroyFunction(h_list, &errInfo); return -1; }
+    auto h_tree = RfcCreateFunction(tree_desc, &errInfo);
+    RFC_STRUCTURE_HANDLE monName;
+    RfcGetStructure(h_tree, cU("MON_NAME"), &monName, &errInfo);
+
+    int result_color = -1;
+
+    for (unsigned i = 0; i < ms_count && result_color < 0; ++i) {
+        RfcMoveTo(ms_table, i, &errInfo);
+        SAP_UC ms[256]=iU(""), mn[256]=iU("");
+        unsigned lms=0, lmn=0;
+        RfcGetString(ms_table, cU("MS_NAME"),   ms, sizeofU(ms), &lms, &errInfo);
+        RfcGetString(ms_table, cU("MONI_NAME"), mn, sizeofU(mn), &lmn, &errInfo);
+
+        RfcSetChars(monName, cU("MS_NAME"),   ms, strlenU(ms), &errInfo);
+        RfcSetChars(monName, cU("MONI_NAME"), mn, strlenU(mn), &errInfo);
+        RfcInvoke(conn, h_tree, &errInfo);
+
+        RFC_TABLE_HANDLE table; unsigned rowCount = 0;
+        RfcGetTable(h_tree, cU("TREE_NODES"), &table, &errInfo);
+        RfcGetRowCount(table, &rowCount, &errInfo);
+
+        for (unsigned j = 0; j < rowCount; ++j) {
+            RfcMoveTo(table, j, &errInfo);
+            SAP_UC mtmc_buf[4096]=iU(""), obj_buf[4096]=iU(""), mte_buf[4096]=iU("");
+            SAP_UC alcolor_buf[8]=iU("");
+            unsigned lm=0, lo=0, lt=0, lc=0;
+            RfcGetString(table, cU("MTMCNAME"),  mtmc_buf, sizeofU(mtmc_buf), &lm, &errInfo);
+            RfcGetString(table, cU("OBJECTNAME"),obj_buf,  sizeofU(obj_buf),  &lo, &errInfo);
+            RfcGetString(table, cU("MTNAMESHRT"),mte_buf,  sizeofU(mte_buf),  &lt, &errInfo);
+            RFC_ERROR_INFO colorErr = {};
+            RfcGetString(table, cU("ALCOLOR"), alcolor_buf, sizeofU(alcolor_buf), &lc, &colorErr);
+
+            if (ucToStr(mtmc_buf, lm) == mtmc &&
+                ucToStr(obj_buf,  lo) == obj  &&
+                ucToStr(mte_buf,  lt) == mte) {
+                if (colorErr.code == RFC_OK) {
+                    string s = ucToStr(alcolor_buf, min(lc, 2u));
+                    if (!s.empty()) try { result_color = stoi(s); } catch (...) {}
+                }
+                vlog(verbose, "fetchAlcolor: found MTE, ALCOLOR=" + to_string(result_color));
+                break;
+            }
+        }
+    }
+    RfcDestroyFunction(h_tree, &errInfo);
+    RfcDestroyFunction(h_list, &errInfo);
+    return result_color;
+}
+
+// ----------------------------------------------------------------------------
 int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
     xmiLogon(conn, "XAL", errInfo, p.verbose);
 
@@ -461,8 +529,15 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
             return 3;
         }
     } else {
-        // No thresholds: just print the raw SAP value.
-        printfU(cU("%s\n"), message);
+        // No thresholds: use SAP's CCMS alert color (ALCOLOR) for the exit code.
+        int color = fetchAlcolor(conn, context_name, object_name, mte_name, errInfo, p.verbose);
+        int rc_out = 0;
+        if      (color == 3) rc_out = 2;  // red    → CRITICAL
+        else if (color == 2) rc_out = 1;  // yellow → WARNING
+
+        if      (rc_out == 2) { cout << "CRITICAL - " << value << endl; return 2; }
+        else if (rc_out == 1) { cout << "WARNING - "  << value << endl; return 1; }
+        else                  { cout << "OK - "       << value << endl; return 0; }
     }
     return 0;
 }
@@ -1053,11 +1128,19 @@ static void print_help() {
 "Modes:\n"
 "  -show                  List all available CCMS monitor sets\n"
 "  -check                 Check a single CCMS monitor value\n"
-"    -monitor=<path>        Monitor path (e.g. SID\\host\\Buffers\\...\\value)\n"
-"    -warn=<n>              Warning threshold (optional)\n"
-"    -critical=<n>          Critical threshold (optional)\n"
+"    -monitor=<path>        Monitor path: SID\\MTMCNAME\\OBJECTNAME\\MTEname\n"
+"                           (use -show to list available paths)\n"
+"    -warn=<n>              Warning threshold (numeric, optional)\n"
+"    -critical=<n>          Critical threshold (numeric, optional)\n"
+"                           Threshold direction is inferred: if critical > warn,\n"
+"                           higher values are worse (e.g. fault counts, CPU %);\n"
+"                           if critical < warn, lower values are worse\n"
+"                           (e.g. free memory, free space).\n"
+"                           Without thresholds, SAP's own CCMS alert color\n"
+"                           (ALCOLOR) is used to determine the exit code.\n"
 "  -checkall              Check all monitors under a monitor set\n"
-"    -monitor=<path>        Monitor set path (e.g. SID\\host\\Buffers)\n"
+"    -monitor=<path>        Monitor set path: SID[\\MTMCNAME[\\OBJECTNAME]]\n"
+"                           Uses SAP's CCMS ALCOLOR for exit codes.\n"
 "  -aborted-job           Check for aborted background jobs\n"
 "  -abap-dump             Check for ABAP short dumps\n"
 "  -sslview               List all X.509 certificates with expiry dates\n"
@@ -1087,8 +1170,12 @@ static void print_help() {
 "\n"
 "Examples:\n"
 "  sap_mon -show -username=RFC_TEST -password=Test123 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100\n"
+"  # Check with numeric thresholds (lower free space = worse, so critical < warn):\n"
 "  sap_mon -check -username=RFC_TEST -password=Test123 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100\\\n"
 "          -monitor='AL1\\saplnx_AL1_01\\OperatingSystem\\Filesystems\\/tmp\\Freespace' -warn=4000 -critical=2999\n"
+"  # Check using SAP's own CCMS alert color (no thresholds needed):\n"
+"  sap_mon -check -username=RFC_TEST -password=Test123 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100\\\n"
+"          -monitor='AL1\\saplnx_AL1_01\\Background\\AbortedJobs'\n"
 "  sap_mon -aborted-job -username=RFC_TEST -password=Test123 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100\n"
 "  sap_mon -rfc -username=RFC_TEST -password=Test123 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100\\\n"
 "          -rfcdestination=AL1\n"
