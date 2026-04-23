@@ -95,9 +95,10 @@ vector<string> ssfp_get_pseinfo(const CliParams& p)
 
             RFC_BYTE cert_buf[65536] = {};
             unsigned cert_len = 0;
-            RFC_RC rc_get = RfcGetXString(row, cU("TABLE_LINE"),
-                                          cert_buf, sizeof(cert_buf),
-                                          &cert_len, &errorInfo);
+            // Flat TYPE TABLE OF XSTRING: row has one anonymous field at index 0
+            RFC_RC rc_get = RfcGetXStringByIndex(row, 0,
+                                                 cert_buf, sizeof(cert_buf),
+                                                 &cert_len, &errorInfo);
 
             // Hex-encode raw DER bytes to uppercase ASCII (2 chars per byte)
             static const char hex_chars[] = "0123456789ABCDEF";
