@@ -398,48 +398,71 @@ static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
     const string& mtmc, const string& obj, const string& mte,
     RFC_ERROR_INFO& errInfo, bool verbose)
 {
-    auto list_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
+    vlog(verbose, "fetchAlcolor: looking for mtmc='" + mtmc + "' obj='" + obj + "' mte='" + mte + "'");
+
+    RFC_ERROR_INFO localErr = {};
+    auto list_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &localErr);
+    vlog(verbose, string("fetchAlcolor: GetFunctionDesc GETLIST ") + (list_desc ? "OK" : "FAILED code=" + to_string(localErr.code)));
     if (!list_desc) return -1;
-    auto h_list = RfcCreateFunction(list_desc, &errInfo);
-    RfcInvoke(conn, h_list, &errInfo);
+
+    auto h_list = RfcCreateFunction(list_desc, &localErr);
+    vlog(verbose, string("fetchAlcolor: CreateFunction GETLIST ") + (h_list ? "OK" : "FAILED"));
+    if (!h_list) return -1;
+
+    RFC_RC rc = RfcInvoke(conn, h_list, &localErr);
+    vlog(verbose, string("fetchAlcolor: Invoke GETLIST rc=") + to_string(rc) +
+         (rc != RFC_OK ? " key=" + ucToStr(localErr.key, strlenU(localErr.key)) : ""));
 
     RFC_TABLE_HANDLE ms_table; unsigned ms_count = 0;
-    RfcGetTable(h_list, cU("MON_SETS"), &ms_table, &errInfo);
-    RfcGetRowCount(ms_table, &ms_count, &errInfo);
+    RfcGetTable(h_list, cU("MON_SETS"), &ms_table, &localErr);
+    RfcGetRowCount(ms_table, &ms_count, &localErr);
+    vlog(verbose, "fetchAlcolor: GETLIST returned " + to_string(ms_count) + " monitor set(s)");
 
-    auto tree_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
-    if (!tree_desc) { RfcDestroyFunction(h_list, &errInfo); return -1; }
-    auto h_tree = RfcCreateFunction(tree_desc, &errInfo);
+    auto tree_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &localErr);
+    vlog(verbose, string("fetchAlcolor: GetFunctionDesc GETTREE ") + (tree_desc ? "OK" : "FAILED code=" + to_string(localErr.code)));
+    if (!tree_desc) { RfcDestroyFunction(h_list, &localErr); return -1; }
+
+    auto h_tree = RfcCreateFunction(tree_desc, &localErr);
+    vlog(verbose, string("fetchAlcolor: CreateFunction GETTREE ") + (h_tree ? "OK" : "FAILED"));
+    if (!h_tree) { RfcDestroyFunction(h_list, &localErr); return -1; }
+
     RFC_STRUCTURE_HANDLE monName;
-    RfcGetStructure(h_tree, cU("MON_NAME"), &monName, &errInfo);
+    RfcGetStructure(h_tree, cU("MON_NAME"), &monName, &localErr);
 
     int result_color = -1;
 
     for (unsigned i = 0; i < ms_count && result_color < 0; ++i) {
-        RfcMoveTo(ms_table, i, &errInfo);
+        RfcMoveTo(ms_table, i, &localErr);
         SAP_UC ms[256]=iU(""), mn[256]=iU("");
         unsigned lms=0, lmn=0;
-        RfcGetString(ms_table, cU("MS_NAME"),   ms, sizeofU(ms), &lms, &errInfo);
-        RfcGetString(ms_table, cU("MONI_NAME"), mn, sizeofU(mn), &lmn, &errInfo);
+        RfcGetString(ms_table, cU("MS_NAME"),   ms, sizeofU(ms), &lms, &localErr);
+        RfcGetString(ms_table, cU("MONI_NAME"), mn, sizeofU(mn), &lmn, &localErr);
 
-        RfcSetChars(monName, cU("MS_NAME"),   ms, strlenU(ms), &errInfo);
-        RfcSetChars(monName, cU("MONI_NAME"), mn, strlenU(mn), &errInfo);
-        RfcInvoke(conn, h_tree, &errInfo);
+        string s_ms = ucToStr(ms, lms);
+        string s_mn = ucToStr(mn, lmn);
+        vlog(verbose, "fetchAlcolor: invoking GETTREE for MS_NAME='" + s_ms + "' MONI_NAME='" + s_mn + "'");
+
+        RfcSetChars(monName, cU("MS_NAME"),   ms, strlenU(ms), &localErr);
+        RfcSetChars(monName, cU("MONI_NAME"), mn, strlenU(mn), &localErr);
+        RFC_RC rc_tree = RfcInvoke(conn, h_tree, &localErr);
+        vlog(verbose, string("fetchAlcolor: GETTREE rc=") + to_string(rc_tree) +
+             (rc_tree != RFC_OK ? " key=" + ucToStr(localErr.key, strlenU(localErr.key)) : ""));
 
         RFC_TABLE_HANDLE table; unsigned rowCount = 0;
-        RfcGetTable(h_tree, cU("TREE_NODES"), &table, &errInfo);
-        RfcGetRowCount(table, &rowCount, &errInfo);
+        RfcGetTable(h_tree, cU("TREE_NODES"), &table, &localErr);
+        RfcGetRowCount(table, &rowCount, &localErr);
+        vlog(verbose, "fetchAlcolor: TREE_NODES rowCount=" + to_string(rowCount));
 
         for (unsigned j = 0; j < rowCount; ++j) {
-            RfcMoveTo(table, j, &errInfo);
+            RfcMoveTo(table, j, &localErr);
             SAP_UC sys_buf[256]=iU(""), mtmc_buf[4096]=iU(""), obj_buf[4096]=iU(""), mte_buf[4096]=iU("");
             SAP_UC cls_buf[16]=iU(""), alcolor_buf[8]=iU("");
             unsigned ls=0, lm=0, lo=0, lt=0, lcls=0, lc=0;
-            RfcGetString(table, cU("MTSYSID"),   sys_buf,  sizeofU(sys_buf),  &ls,   &errInfo);
-            RfcGetString(table, cU("MTMCNAME"),  mtmc_buf, sizeofU(mtmc_buf), &lm,   &errInfo);
-            RfcGetString(table, cU("OBJECTNAME"),obj_buf,  sizeofU(obj_buf),  &lo,   &errInfo);
-            RfcGetString(table, cU("MTNAMESHRT"),mte_buf,  sizeofU(mte_buf),  &lt,   &errInfo);
-            RfcGetString(table, cU("MTCLASS"),   cls_buf,  sizeofU(cls_buf),  &lcls, &errInfo);
+            RfcGetString(table, cU("MTSYSID"),   sys_buf,  sizeofU(sys_buf),  &ls,   &localErr);
+            RfcGetString(table, cU("MTMCNAME"),  mtmc_buf, sizeofU(mtmc_buf), &lm,   &localErr);
+            RfcGetString(table, cU("OBJECTNAME"),obj_buf,  sizeofU(obj_buf),  &lo,   &localErr);
+            RfcGetString(table, cU("MTNAMESHRT"),mte_buf,  sizeofU(mte_buf),  &lt,   &localErr);
+            RfcGetString(table, cU("MTCLASS"),   cls_buf,  sizeofU(cls_buf),  &lcls, &localErr);
             RFC_ERROR_INFO colorErr = {};
             RfcGetString(table, cU("ALCOLOR"), alcolor_buf, sizeofU(alcolor_buf), &lc, &colorErr);
 
@@ -448,34 +471,29 @@ static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
             string s_obj  = ucToStr(obj_buf,  lo);
             string s_mte  = ucToStr(mte_buf,  lt);
             string s_cls  = ucToStr(cls_buf,  min(lcls, 3u));
+            string s_col  = (colorErr.code == RFC_OK) ? ucToStr(alcolor_buf, min(lc, 2u)) : "?";
 
-            // Dump every leaf node so we can see what fields actually look like.
             if (verbose && !s_mte.empty())
-                cerr << "[v]   fetchAlcolor scan: sys='" << s_sys << "' mtmc='" << s_mtmc
+                cerr << "[v]   row " << j << ": sys='" << s_sys << "' mtmc='" << s_mtmc
                      << "' obj='" << s_obj << "' mte='" << s_mte
-                     << "' cls=" << s_cls << " alcolor='"
-                     << ucToStr(alcolor_buf, min(lc, 2u)) << "'\n";
+                     << "' cls=" << s_cls << " alcolor='" << s_col << "'\n";
 
-            // Strict: MTMCNAME + OBJECTNAME + MTNAMESHRT all match.
-            // Loose:  MTMCNAME is empty in the node (OS / grouping-parent case);
-            //         match by OBJECTNAME + MTNAMESHRT alone.
-            // MTSYSID is not used: it varies between monitor types (some nodes
-            // carry the instance ID rather than the 3-char SID) and we are
-            // already connected to a single system.
             bool match = (s_obj == obj) && (s_mte == mte) &&
                          (s_mtmc == mtmc || s_mtmc.empty());
             if (!match) continue;
 
+            vlog(verbose, "fetchAlcolor: MATCHED row " + to_string(j) +
+                 " mtmcname='" + s_mtmc + "' alcolor='" + s_col + "'");
             if (colorErr.code == RFC_OK) {
-                string s = ucToStr(alcolor_buf, min(lc, 2u));
-                if (!s.empty()) try { result_color = stoi(s); } catch (...) {}
+                if (!s_col.empty()) try { result_color = stoi(s_col); } catch (...) {}
             }
-            vlog(verbose, "fetchAlcolor: found MTE (mtmcname='" + s_mtmc + "'), ALCOLOR=" + to_string(result_color));
             break;
         }
     }
-    RfcDestroyFunction(h_tree, &errInfo);
-    RfcDestroyFunction(h_list, &errInfo);
+
+    vlog(verbose, "fetchAlcolor: result_color=" + to_string(result_color));
+    RfcDestroyFunction(h_tree, &localErr);
+    RfcDestroyFunction(h_list, &localErr);
     return result_color;
 }
 
