@@ -52,9 +52,9 @@ RFC_RC          g_rc = RFC_OK;
 // parseArgs(char**) supprimé — remplacé par parseArgsU(SAP_UC**) dans mainU.
 
 // Convert a SAP_UC buffer of known length to std::string.
-// strlenU is unreliable on Linux (wchar_t is 4-byte, SAP_UC is 2-byte).
 // Uses the resultLen output of RfcGetString and low-byte extraction,
 // which is correct for all ASCII/Latin-1 ABAP field values.
+// (strlenU is NOT used here because we already have the length from RfcGetString.)
 static string ucToStr(const SAP_UC* buf, unsigned len) {
     string s;
     s.reserve(len);
@@ -62,16 +62,6 @@ static string ucToStr(const SAP_UC* buf, unsigned len) {
         s += static_cast<char>(buf[i] & 0xFF);
     while (!s.empty() && s.back() == ' ') s.pop_back();
     return s;
-}
-
-// Safe replacement for strlenU on Linux: counts 2-byte SAP_UC units until null.
-// strlenU = wcslen on Linux (4-byte wchar_t) misreads 2-byte SAP_UC buffers,
-// returning ~half the real length for runtime strings from mallocU/utf8ToSapUc.
-static unsigned sapUcLen(const SAP_UC* s) {
-    if (!s) return 0;
-    unsigned n = 0;
-    while (s[n]) ++n;
-    return n;
 }
 
 // =============================================================================
@@ -188,8 +178,8 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
 
         RfcGetStructure(handle2, cU("MONITOR_NAME"), &returnStructure, &errInfo);
         RfcSetStructure(handle2, cU("MONITOR_NAME"),  returnStructure, &errInfo);
-        RfcSetChars(returnStructure, cU("MS_NAME"),   ms_name,   sapUcLen(ms_name),   &errInfo);
-        RfcSetChars(returnStructure, cU("MONI_NAME"), moni_name, sapUcLen(moni_name), &errInfo);
+        RfcSetChars(returnStructure, cU("MS_NAME"),   ms_name,   strlenU(ms_name),   &errInfo);
+        RfcSetChars(returnStructure, cU("MONI_NAME"), moni_name, strlenU(moni_name), &errInfo);
 
         RfcInvoke(conn, handle2, &errInfo);
 
@@ -297,11 +287,11 @@ static RFC_FUNCTION_HANDLE resolveMtClass(
     if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MTE_GETTIDBYNAME failed");
     auto handle = RfcCreateFunction(bapi, &errInfo);
 
-    RfcSetChars(handle, cU("CONTEXT_NAME"),       context_name, sapUcLen(context_name), &errInfo);
+    RfcSetChars(handle, cU("CONTEXT_NAME"),       context_name, strlenU(context_name), &errInfo);
     RfcSetChars(handle, cU("EXTERNAL_USER_NAME"),  cU("External_User_Name_nonsens"), 26, &errInfo);
-    RfcSetChars(handle, cU("MTE_NAME"),            mte_name,    sapUcLen(mte_name),    &errInfo);
-    RfcSetChars(handle, cU("OBJECT_NAME"),         object_name, sapUcLen(object_name), &errInfo);
-    RfcSetChars(handle, cU("SYSTEM_ID"),           system_id,   sapUcLen(system_id),   &errInfo);
+    RfcSetChars(handle, cU("MTE_NAME"),            mte_name,    strlenU(mte_name),    &errInfo);
+    RfcSetChars(handle, cU("OBJECT_NAME"),         object_name, strlenU(object_name), &errInfo);
+    RfcSetChars(handle, cU("SYSTEM_ID"),           system_id,   strlenU(system_id),   &errInfo);
 
     RfcInvoke(conn, handle, &errInfo);
 
@@ -527,8 +517,8 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         RfcSetChars(h_tree, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
         RFC_STRUCTURE_HANDLE monName;
         RfcGetStructure(h_tree, cU("MONITOR_NAME"), &monName, &errInfo);
-        RfcSetChars(monName, cU("MS_NAME"),   ms_name,   sapUcLen(ms_name),   &errInfo);
-        RfcSetChars(monName, cU("MONI_NAME"), moni_name, sapUcLen(moni_name), &errInfo);
+        RfcSetChars(monName, cU("MS_NAME"),   ms_name,   strlenU(ms_name),   &errInfo);
+        RfcSetChars(monName, cU("MONI_NAME"), moni_name, strlenU(moni_name), &errInfo);
         RfcInvoke(conn, h_tree, &errInfo);
 
         unsigned rowCount = 0;
