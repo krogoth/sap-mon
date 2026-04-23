@@ -395,7 +395,7 @@ static string readMteValue(
 //             is empty (the node was placed in the tree by a grouping parent,
 //             not by its own monitoring concept — e.g. CPU, filesystem MTEs).
 static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
-    const string& sid, const string& mtmc, const string& obj, const string& mte,
+    const string& mtmc, const string& obj, const string& mte,
     RFC_ERROR_INFO& errInfo, bool verbose)
 {
     auto list_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
@@ -432,25 +432,26 @@ static int fetchAlcolor(RFC_CONNECTION_HANDLE conn,
 
         for (unsigned j = 0; j < rowCount; ++j) {
             RfcMoveTo(table, j, &errInfo);
-            SAP_UC sys_buf[256]=iU(""), mtmc_buf[4096]=iU(""), obj_buf[4096]=iU(""), mte_buf[4096]=iU("");
+            SAP_UC mtmc_buf[4096]=iU(""), obj_buf[4096]=iU(""), mte_buf[4096]=iU("");
             SAP_UC alcolor_buf[8]=iU("");
-            unsigned ls=0, lm=0, lo=0, lt=0, lc=0;
-            RfcGetString(table, cU("MTSYSID"),   sys_buf,  sizeofU(sys_buf),  &ls, &errInfo);
+            unsigned lm=0, lo=0, lt=0, lc=0;
             RfcGetString(table, cU("MTMCNAME"),  mtmc_buf, sizeofU(mtmc_buf), &lm, &errInfo);
             RfcGetString(table, cU("OBJECTNAME"),obj_buf,  sizeofU(obj_buf),  &lo, &errInfo);
             RfcGetString(table, cU("MTNAMESHRT"),mte_buf,  sizeofU(mte_buf),  &lt, &errInfo);
             RFC_ERROR_INFO colorErr = {};
             RfcGetString(table, cU("ALCOLOR"), alcolor_buf, sizeofU(alcolor_buf), &lc, &colorErr);
 
-            string s_sys  = ucToStr(sys_buf,  ls);
             string s_mtmc = ucToStr(mtmc_buf, lm);
             string s_obj  = ucToStr(obj_buf,  lo);
             string s_mte  = ucToStr(mte_buf,  lt);
 
-            // Strict: all four fields match.
-            // Loose: MTMCNAME is empty in the node (grouping-parent case) and
-            //        SID + OBJECTNAME + MTNAMESHRT match.
-            bool match = (s_sys == sid) && (s_obj == obj) && (s_mte == mte) &&
+            // Strict: MTMCNAME + OBJECTNAME + MTNAMESHRT all match.
+            // Loose:  MTMCNAME is empty in the node (OS / grouping-parent case);
+            //         match by OBJECTNAME + MTNAMESHRT alone.
+            // MTSYSID is not used: it varies between monitor types (some nodes
+            // carry the instance ID rather than the 3-char SID) and we are
+            // already connected to a single system.
+            bool match = (s_obj == obj) && (s_mte == mte) &&
                          (s_mtmc == mtmc || s_mtmc.empty());
             if (!match) continue;
 
@@ -547,7 +548,7 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
         // No thresholds: use SAP's CCMS alert color (ALCOLOR) for the exit code.
         // Fallback when ALCOLOR is unavailable: for status MTEs (101/102) any
         // non-empty message is an alert condition (same logic as -checkall).
-        int color = fetchAlcolor(conn, sap_sid, context_name, object_name, mte_name, errInfo, p.verbose);
+        int color = fetchAlcolor(conn, context_name, object_name, mte_name, errInfo, p.verbose);
         static const char* color_names[] = { "unknown", "green", "yellow", "red" };
         const char* cname = (color >= 1 && color <= 3) ? color_names[color] : "not found";
         vlog(p.verbose, string("ALCOLOR=") + (color >= 0 ? to_string(color) : "-1") + " (" + cname + ")");
