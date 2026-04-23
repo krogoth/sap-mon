@@ -533,6 +533,9 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
         // Fallback when ALCOLOR is unavailable: for status MTEs (101/102) any
         // non-empty message is an alert condition (same logic as -checkall).
         int color = fetchAlcolor(conn, context_name, object_name, mte_name, errInfo, p.verbose);
+        static const char* color_names[] = { "unknown", "green", "yellow", "red" };
+        const char* cname = (color >= 1 && color <= 3) ? color_names[color] : "not found";
+        vlog(p.verbose, string("ALCOLOR=") + (color >= 0 ? to_string(color) : "-1") + " (" + cname + ")");
         int rc_out = 0;
         if      (color == 3) rc_out = 2;  // red    → CRITICAL
         else if (color == 2) rc_out = 1;  // yellow → WARNING
