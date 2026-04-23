@@ -470,88 +470,100 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
 int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
     xmiLogon(conn, "XAL", errInfo, p.verbose);
 
-    const string& monitor_name = p.monitor;
-    size_t bs1 = monitor_name.find('\\');
-    size_t bs2 = (bs1 != string::npos) ? monitor_name.find('\\', bs1 + 1) : string::npos;
+    // Parse -monitor= path: SID[\MTMCNAME[\OBJECTNAME]]
+    // Filters tree nodes by MTMCNAME and/or OBJECTNAME; empty = match all.
+    const string& mon = p.monitor;
+    size_t bs1 = mon.find('\\');
+    size_t bs2 = (bs1 != string::npos) ? mon.find('\\', bs1 + 1) : string::npos;
+    string sap_sid      = (bs1 != string::npos) ? mon.substr(0, bs1) : mon;
+    string mtmc_filter  = (bs1 != string::npos && bs2 != string::npos) ? mon.substr(bs1 + 1, bs2 - bs1 - 1)
+                        : (bs1 != string::npos)                        ? mon.substr(bs1 + 1)
+                        : string{};
+    string obj_filter   = (bs2 != string::npos) ? mon.substr(bs2 + 1) : string{};
 
-    if (bs1 == string::npos || bs2 == string::npos) {
-        cerr << "handle_checkall: -monitor= value must contain at least 2 backslashes: " << monitor_name << endl;
-        return 3;
+    vlog(p.verbose, "checkall: sid=" + sap_sid + " mtmc_filter=" + mtmc_filter + " obj_filter=" + obj_filter);
+
+    // Enumerate all monitor sets, then walk each tree — same as -show.
+    auto bapi_list = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
+    if (!bapi_list) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETLIST failed");
+    auto h_list = RfcCreateFunction(bapi_list, &errInfo);
+    RfcSetChars(h_list, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
+    RfcInvoke(conn, h_list, &errInfo);
+
+    unsigned monCount = 0;
+    RFC_TABLE_HANDLE monTable;
+    RfcGetTable(h_list, cU("MONITOR_NAMES"), &monTable, &errInfo);
+    RfcGetRowCount(monTable, &monCount, &errInfo);
+    vlog(p.verbose, "Monitor sets: " + to_string(monCount));
+
+    static const set<string> LEAF_CLASSES = {"100", "101", "102", "111"};
+    SAP_UC message[8192] = iU("");
+
+    for (unsigned i = 0; i < monCount; ++i) {
+        RfcMoveTo(monTable, i, &errInfo);
+        SAP_UC ms_name[4096] = iU(""), moni_name[4096] = iU("");
+        unsigned len_ms = 0, len_moni = 0;
+        RfcGetString(monTable, cU("MS_NAME"),   ms_name,   sizeofU(ms_name),   &len_ms,   &errInfo);
+        RfcGetString(monTable, cU("MONI_NAME"), moni_name, sizeofU(moni_name), &len_moni, &errInfo);
+
+        auto bapi_tree = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
+        if (!bapi_tree) continue;
+        auto h_tree = RfcCreateFunction(bapi_tree, &errInfo);
+        RfcSetInt(h_tree,  cU("MAX_TREE_DEPTH"),     0, &errInfo);
+        RfcSetInt(h_tree,  cU("VIS_ON_USR_LEVEL"),   6, &errInfo);
+        RfcSetChars(h_tree, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
+        RFC_STRUCTURE_HANDLE monName;
+        RfcGetStructure(h_tree, cU("MONITOR_NAME"), &monName, &errInfo);
+        RfcSetChars(monName, cU("MS_NAME"),   ms_name,   sapUcLen(ms_name),   &errInfo);
+        RfcSetChars(monName, cU("MONI_NAME"), moni_name, sapUcLen(moni_name), &errInfo);
+        RfcInvoke(conn, h_tree, &errInfo);
+
+        unsigned rowCount = 0;
+        RFC_TABLE_HANDLE table;
+        RfcGetTable(h_tree, cU("TREE_NODES"), &table, &errInfo);
+        RfcGetRowCount(table, &rowCount, &errInfo);
+
+        for (unsigned j = 0; j < rowCount; ++j) {
+            RfcMoveTo(table, j, &errInfo);
+            SAP_UC sys[256]=iU(""), mtmc[4096]=iU(""), obj[4096]=iU(""), mte[4096]=iU(""), cls[16]=iU("");
+            unsigned lsys=0, lmtmc=0, lobj=0, lmte=0, lcls=0;
+            RfcGetString(table, cU("MTSYSID"),   sys,  sizeofU(sys),  &lsys,  &errInfo);
+            RfcGetString(table, cU("MTMCNAME"),  mtmc, sizeofU(mtmc), &lmtmc, &errInfo);
+            RfcGetString(table, cU("OBJECTNAME"),obj,  sizeofU(obj),  &lobj,  &errInfo);
+            RfcGetString(table, cU("MTNAMESHRT"),mte,  sizeofU(mte),  &lmte,  &errInfo);
+            RfcGetString(table, cU("MTCLASS"),   cls,  sizeofU(cls),  &lcls,  &errInfo);
+
+            string s_sys  = ucToStr(sys,  lsys);
+            string s_mtmc = ucToStr(mtmc, lmtmc);
+            string s_obj  = ucToStr(obj,  lobj);
+            string s_mte  = ucToStr(mte,  lmte);
+            string s_cls  = ucToStr(cls,  min(lcls, 3u));
+
+            if (s_mte.empty() || !LEAF_CLASSES.count(s_cls)) continue;
+            if (!mtmc_filter.empty() && s_mtmc != mtmc_filter) continue;
+            if (!obj_filter.empty()  && s_obj  != obj_filter)  continue;
+
+            cout << s_sys << "\\" << s_mtmc << "\\" << s_obj << "\\" << s_mte << " ";
+
+            auto uc_sys2  = utf8ToSapUc(s_sys,  errInfo);
+            auto uc_mtmc2 = utf8ToSapUc(s_mtmc, errInfo);
+            auto uc_obj2  = utf8ToSapUc(s_obj,  errInfo);
+            auto uc_mte2  = utf8ToSapUc(s_mte,  errInfo);
+
+            RFC_STRUCTURE_HANDLE tid;
+            string mtclass;
+            auto tid_fn = resolveMtClass(conn,
+                uc_mtmc2.get(), uc_mte2.get(), uc_obj2.get(), uc_sys2.get(),
+                tid, mtclass, errInfo, p.verbose);
+
+            string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
+            RfcDestroyFunction(tid_fn, &errInfo);
+
+            cout << (value.empty() ? "(no value)" : value) << "\n";
+        }
+        RfcDestroyFunction(h_tree, &errInfo);
     }
-
-    string ms_name_s  = monitor_name.substr(0, bs1);
-    string moni_name_s = monitor_name.substr(bs1 + 1, bs2 - bs1 - 1);
-
-    auto uc_ms   = utf8ToSapUc(ms_name_s,  errInfo);
-    auto uc_moni = utf8ToSapUc(moni_name_s, errInfo);
-
-    vlog(p.verbose, "BAPI_SYSTEM_MON_GETTREE: ms=" + ms_name_s + " moni=" + moni_name_s);
-    auto bapi = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
-    if (!bapi) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETTREE failed");
-    auto handle = RfcCreateFunction(bapi, &errInfo);
-
-    RfcSetChars(handle, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
-    RfcSetInt(handle,   cU("MAX_TREE_DEPTH"),      0, &errInfo);
-    RfcSetInt(handle,   cU("VIS_ON_USR_LEVEL"),    6, &errInfo);
-
-    RFC_STRUCTURE_HANDLE monitorName;
-    RfcGetStructure(handle, cU("MONITOR_NAME"), &monitorName, &errInfo);
-    RfcSetChars(monitorName, cU("MONI_NAME"), uc_moni.get(), sapUcLen(uc_moni.get()), &errInfo);
-    RfcSetChars(monitorName, cU("MS_NAME"),   uc_ms.get(),   sapUcLen(uc_ms.get()),   &errInfo);
-
-    RfcInvoke(conn, handle, &errInfo);
-
-    unsigned rowCount = 0;
-    RFC_TABLE_HANDLE table;
-    RfcGetTable(handle, cU("TREE_NODES"), &table, &errInfo);
-    RfcGetRowCount(table, &rowCount, &errInfo);
-    vlog(p.verbose, "Tree nodes found: " + to_string(rowCount));
-
-    SAP_UC context_name[4096] = iU("");
-    SAP_UC mte_name[4096]     = iU("");
-    SAP_UC object_name[4096]  = iU("");
-    SAP_UC system_id[4096]    = iU("");
-    SAP_UC message[8192]      = iU("");
-
-    for (unsigned i = 0; i < rowCount; ++i) {
-        RfcMoveTo(table, i, &errInfo);
-        unsigned len_sys = 0, len_ctx = 0, len_obj = 0, len_mte = 0;
-        RfcGetString(table, cU("MTSYSID"),   system_id,   sizeofU(system_id),   &len_sys, &errInfo);
-        RfcGetString(table, cU("MTMCNAME"),  context_name,sizeofU(context_name),&len_ctx, &errInfo);
-        RfcGetString(table, cU("OBJECTNAME"),object_name, sizeofU(object_name), &len_obj, &errInfo);
-        RfcGetString(table, cU("MTNAMESHRT"),mte_name,    sizeofU(mte_name),    &len_mte, &errInfo);
-
-        // Convert to UTF-8 for display, then re-encode to SAP_UC for BAPI params
-        string s_sys = ucToStr(system_id,   len_sys);
-        string s_ctx = ucToStr(context_name,len_ctx);
-        string s_obj = ucToStr(object_name, len_obj);
-        string s_mte = ucToStr(mte_name,    len_mte);
-
-        // Skip rows with no MTE name (container nodes)
-        if (s_mte.empty()) continue;
-
-        cout << s_sys << "\\" << s_ctx << "\\" << s_obj << "\\" << s_mte << " ";
-
-        // Re-encode to SAP_UC for BAPI parameter passing
-        auto uc_sys2 = utf8ToSapUc(s_sys, errInfo);
-        auto uc_ctx2 = utf8ToSapUc(s_ctx, errInfo);
-        auto uc_obj2 = utf8ToSapUc(s_obj, errInfo);
-        auto uc_mte2 = utf8ToSapUc(s_mte, errInfo);
-
-        RFC_STRUCTURE_HANDLE tid;
-        string mtclass;
-        auto tid_fn = resolveMtClass(conn,
-            uc_ctx2.get(), uc_mte2.get(), uc_obj2.get(), uc_sys2.get(),
-            tid, mtclass, errInfo, p.verbose);
-
-        if (mtclass == "050") { RfcDestroyFunction(tid_fn, &errInfo); cout << "###" << endl; continue; }
-
-        string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
-        RfcDestroyFunction(tid_fn, &errInfo);  // safe — readMteValue done with tid
-        if (!value.empty()) cout << " " << value << "\n";
-    }
-
-    RfcDestroyFunction(handle, &errInfo);
+    RfcDestroyFunction(h_list, &errInfo);
     return 0;
 }
 
