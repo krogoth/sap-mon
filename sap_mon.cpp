@@ -446,10 +446,21 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
             int warn_int     = stoi(p.warn);
             int critical_int = stoi(p.critical);
 
-            // Critical must be checked first — warn threshold is always lower.
-            if (val_int >= critical_int) { cout << "CRITICAL - " << value << endl; return 2; }
-            if (val_int >= warn_int)     { cout << "WARNING - "  << value << endl; return 1; }
-            cout << "OK - " << value << endl;
+            // Infer direction from threshold ordering:
+            //   critical > warn → higher value is worse (fault counts, CPU usage, …)
+            //   critical < warn → lower  value is worse (free memory, free space, …)
+            int rc_out = 0;
+            if (critical_int >= warn_int) {
+                if      (val_int >= critical_int) rc_out = 2;
+                else if (val_int >= warn_int)     rc_out = 1;
+            } else {
+                if      (val_int <= critical_int) rc_out = 2;
+                else if (val_int <= warn_int)     rc_out = 1;
+            }
+
+            if      (rc_out == 2) { cout << "CRITICAL - " << value << endl; return 2; }
+            else if (rc_out == 1) { cout << "WARNING - "  << value << endl; return 1; }
+            else                  { cout << "OK - "       << value << endl; }
         } catch (const std::invalid_argument&) {
             // Non-numeric MTE value (e.g. MTCLASS=102 status message):
             // any non-empty message means an alert condition → CRITICAL.
