@@ -18,8 +18,7 @@ using namespace std;
 
 // Returns vector of "SubjectName;;;###ValidUntil" entries.
 // certlist_array entries are "hex_DER;;;CONTEXT;;;APPLIC" where hex_DER is the
-// raw DER certificate encoded as uppercase hex (2 chars per byte), as returned
-// by RfcGetString on a RAWSTRING field.
+// raw DER certificate encoded as uppercase hex (2 chars per byte).
 vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_check)
 {
     OpenSSL_add_all_algorithms();
@@ -31,17 +30,8 @@ vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_ch
         size_t sep = certlist_array[i].find(";;;");
         string cert_hex = certlist_array[i].substr(0, sep);
 
-        cerr << "read_cert_infos: entry " << i
-             << " cert_hex.size()=" << cert_hex.size()
-             << " first_chars='" << cert_hex.substr(0, 20) << "'"
-             << " sep=" << sep << "\n";
-
-        if (cert_hex.empty() || cert_hex.size() % 2 != 0) {
-            cerr << "read_cert_infos: invalid hex data for entry " << i
-                 << " (empty=" << cert_hex.empty()
-                 << " odd=" << (cert_hex.size() % 2 != 0) << ")\n";
+        if (cert_hex.empty() || cert_hex.size() % 2 != 0)
             continue;
-        }
 
         // Decode hex string to raw DER bytes
         vector<unsigned char> der;
@@ -54,17 +44,13 @@ vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_ch
         // Parse DER directly — no PEM conversion needed
         const unsigned char* p = der.data();
         X509* x509 = d2i_X509(nullptr, &p, static_cast<long>(der.size()));
-        if (!x509) {
-            cerr << "read_cert_infos: d2i_X509 failed for entry " << i << endl;
-            ERR_print_errors_fp(stderr);
+        if (!x509)
             continue;
-        }
 
         // Extract subject name
         BIO* subj_bio = BIO_new(BIO_s_mem());
         X509_NAME* subject = X509_get_subject_name(x509);
         if (!subject) {
-            cerr << "read_cert_infos: X509_get_subject_name failed for entry " << i << endl;
             BIO_free(subj_bio);
             X509_free(x509);
             continue;
@@ -83,7 +69,6 @@ vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_ch
         BIO* exp_bio = BIO_new(BIO_s_mem());
         const ASN1_TIME* not_after = X509_get0_notAfter(x509);
         if (!not_after) {
-            cerr << "read_cert_infos: X509_get0_notAfter failed for entry " << i << endl;
             BIO_free(exp_bio);
             X509_free(x509);
             continue;
