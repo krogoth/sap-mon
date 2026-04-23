@@ -498,6 +498,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 
     static const set<string> LEAF_CLASSES = {"100", "101", "102", "111"};
     SAP_UC message[8192] = iU("");
+    int worst_rc = 0;
 
     for (unsigned i = 0; i < monCount; ++i) {
         RfcMoveTo(monTable, i, &errInfo);
@@ -526,12 +527,16 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         for (unsigned j = 0; j < rowCount; ++j) {
             RfcMoveTo(table, j, &errInfo);
             SAP_UC sys[256]=iU(""), mtmc[4096]=iU(""), obj[4096]=iU(""), mte[4096]=iU(""), cls[16]=iU("");
-            unsigned lsys=0, lmtmc=0, lobj=0, lmte=0, lcls=0;
+            SAP_UC alcolor_buf[8] = iU("");
+            unsigned lsys=0, lmtmc=0, lobj=0, lmte=0, lcls=0, lcolor=0;
             RfcGetString(table, cU("MTSYSID"),   sys,  sizeofU(sys),  &lsys,  &errInfo);
             RfcGetString(table, cU("MTMCNAME"),  mtmc, sizeofU(mtmc), &lmtmc, &errInfo);
             RfcGetString(table, cU("OBJECTNAME"),obj,  sizeofU(obj),  &lobj,  &errInfo);
             RfcGetString(table, cU("MTNAMESHRT"),mte,  sizeofU(mte),  &lmte,  &errInfo);
             RfcGetString(table, cU("MTCLASS"),   cls,  sizeofU(cls),  &lcls,  &errInfo);
+            // ALCOLOR: CCMS internal traffic-light color (1=green, 2=yellow, 3=red)
+            RFC_ERROR_INFO colorErr = {};
+            RfcGetString(table, cU("ALCOLOR"), alcolor_buf, sizeofU(alcolor_buf), &lcolor, &colorErr);
 
             string s_sys  = ucToStr(sys,  lsys);
             string s_mtmc = ucToStr(mtmc, lmtmc);
@@ -542,8 +547,6 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             if (s_mte.empty() || !LEAF_CLASSES.count(s_cls)) continue;
             if (!mtmc_filter.empty() && s_mtmc != mtmc_filter) continue;
             if (!obj_filter.empty()  && s_obj  != obj_filter)  continue;
-
-            cout << s_sys << "\\" << s_mtmc << "\\" << s_obj << "\\" << s_mte << " ";
 
             auto uc_sys2  = utf8ToSapUc(s_sys,  errInfo);
             auto uc_mtmc2 = utf8ToSapUc(s_mtmc, errInfo);
@@ -559,12 +562,29 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
             RfcDestroyFunction(tid_fn, &errInfo);
 
-            cout << (value.empty() ? "(no value)" : value) << "\n";
+            // Determine node exit code from CCMS ALCOLOR when available,
+            // otherwise fall back to value-based logic for status MTEs.
+            int node_rc = 0;
+            string s_alcolor = (colorErr.code == RFC_OK) ? ucToStr(alcolor_buf, min(lcolor, 2u)) : "";
+            if (!s_alcolor.empty()) {
+                int color = 0;
+                try { color = stoi(s_alcolor); } catch (...) {}
+                if      (color == 3) node_rc = 2;  // red   → CRITICAL
+                else if (color == 2) node_rc = 1;  // yellow→ WARNING
+            } else if ((s_cls == "102" || s_cls == "101") && !value.empty()) {
+                node_rc = 2;  // status MTE with message → CRITICAL
+            }
+            worst_rc = max(worst_rc, node_rc);
+
+            const char* label = (node_rc == 2) ? "CRIT" : (node_rc == 1) ? "WARN" : "OK  ";
+            cout << label << "  " << s_sys << "\\" << s_mtmc << "\\" << s_obj << "\\" << s_mte;
+            if (!value.empty()) cout << "  " << value;
+            cout << "\n";
         }
         RfcDestroyFunction(h_tree, &errInfo);
     }
     RfcDestroyFunction(h_list, &errInfo);
-    return 0;
+    return worst_rc;
 }
 
 // ----------------------------------------------------------------------------
