@@ -1065,20 +1065,31 @@ static CliParams parseArgsU(int argc, SAP_UC** argv) {
     p.psefile    = get("psefile");
     p.sapgenpse  = get("sapgenpse");
     p.monitor_set = get("monitor-set");
+    p.dest        = get("dest");
+    p.inipath     = get("inipath");
     p.insecure   = kv.count("insecure") > 0;
     p.verbose    = kv.count("verbose") > 0 || kv.count("v") > 0;
 
-    // Validate credentials for RFC-based modes
+    // Validate credentials for RFC-based modes.
+    // Either -dest= (INI file) or the full explicit set must be provided — not both.
     static const set<string> rfc_modes = {
         "-check", "-checkall", "-abortjob", "-abapdump",
         "-sslview", "-sslcheck", "-rfc", "-javacheck", "-javashow"
     };
     if (rfc_modes.count(p.mode)) {
-        if (p.username.empty()) throw std::runtime_error("Missing required option: -username=");
-        if (p.password.empty()) throw std::runtime_error("Missing required option: -password=");
-        if (p.hostname.empty()) throw std::runtime_error("Missing required option: -hostname=");
-        if (p.sysnr.empty())    throw std::runtime_error("Missing required option: -sysnum=");
-        if (p.client.empty())   throw std::runtime_error("Missing required option: -client=");
+        const bool has_dest   = !p.dest.empty();
+        const bool has_explicit = !p.username.empty() || !p.password.empty()
+                                || !p.hostname.empty() || !p.sysnr.empty();
+        if (has_dest && has_explicit)
+            throw std::runtime_error(
+                "-dest= is mutually exclusive with -username/-password/-hostname/-sysnum");
+        if (!has_dest) {
+            if (p.username.empty()) throw std::runtime_error("Missing required option: -username= (or use -dest=)");
+            if (p.password.empty()) throw std::runtime_error("Missing required option: -password= (or use -dest=)");
+            if (p.hostname.empty()) throw std::runtime_error("Missing required option: -hostname= (or use -dest=)");
+            if (p.sysnr.empty())    throw std::runtime_error("Missing required option: -sysnum= (or use -dest=)");
+            if (p.client.empty())   throw std::runtime_error("Missing required option: -client= (or use -dest=)");
+        }
     }
 
     return p;
@@ -1124,7 +1135,10 @@ static void print_help() {
     cout <<
 "Usage: sap_mon -<mode> [options]\n"
 "\n"
-"Connection options (required for RFC modes):\n"
+"Connection options (required for RFC modes — use -dest OR explicit params):\n"
+"  -dest=<name>           sapnwrfc.ini destination name; all connection\n"
+"                         parameters are read from the INI file\n"
+"  -inipath=<dir>         Directory containing sapnwrfc.ini (default: CWD)\n"
 "  -username=<user>       SAP logon user\n"
 "  -password=<pass>       SAP logon password\n"
 "  -hostname=<host>       SAP application server host (or SAP router string)\n"

@@ -31,6 +31,8 @@ struct CliParams {
     std::string psefile;
     std::string sapgenpse;
     std::string monitor_set;        // -monitor-set: filter checkall by MS_NAME[\MONI_NAME]
+    std::string dest;               // -dest: sapnwrfc.ini destination name (mutually exclusive with explicit creds)
+    std::string inipath;            // -inipath: directory containing sapnwrfc.ini
     bool        insecure = false;  // -insecure: skip SSL peer/host verification (HTTPS only)
     bool        verbose  = false;  // -verbose/-v: print operation details to stderr
 };
@@ -124,13 +126,29 @@ inline string sapUcToUtf8(const SAP_UC* src, RFC_ERROR_INFO& errInfo) {
 }
 
 // Opens an RFC connection from CliParams.
+// When p.dest is set, delegates all connection parameters to sapnwrfc.ini.
+// Otherwise uses the explicit credential fields.
 // `storage` keeps the SapUcString buffers alive for the lifetime of the connection.
 inline RFC_CONNECTION_HANDLE openRfcConnection(
     const CliParams& p,
     vector<SapUcString>& storage,
     RFC_ERROR_INFO& errInfo)
 {
+    if (!p.inipath.empty()) {
+        auto uc_path = utf8ToSapUc(p.inipath, errInfo);
+        RfcSetIniPath(uc_path.get(), &errInfo);
+    }
+
     storage.clear();
+
+    if (!p.dest.empty()) {
+        storage.push_back(utf8ToSapUc(p.dest, errInfo));
+        RFC_CONNECTION_PARAMETER loginParams[1];
+        loginParams[0].name  = cU("dest");
+        loginParams[0].value = storage[0].get();
+        return RfcOpenConnection(loginParams, 1, &errInfo);
+    }
+
     storage.reserve(6);
     storage.push_back(utf8ToSapUc(p.username, errInfo));
     storage.push_back(utf8ToSapUc(p.password, errInfo));
