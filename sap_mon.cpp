@@ -1138,6 +1138,7 @@ static void print_help() {
 "  -dest=<name>           sapnwrfc.ini destination name; all connection\n"
 "                         parameters are read from the INI file\n"
 "  -inipath=<dir>         Directory containing sapnwrfc.ini (default: CWD)\n"
+"                         Pass the directory, not the full file path\n"
 "  -username=<user>       SAP logon user\n"
 "  -password=<pass>       SAP logon password\n"
 "  -hostname=<host>       SAP application server host (or SAP router string)\n"
@@ -1258,7 +1259,10 @@ int mainU(int argc, SAP_UC** argv) {
     vector<SapUcString> ucStorage;
 
     if (RFC_CONNECTED_MODES.count(p.mode)) {
-        vlog(p.verbose, "Opening RFC connection: host=" + p.hostname + " user=" + p.username + " sysnr=" + p.sysnr + " client=" + p.client);
+        if (!p.dest.empty())
+            vlog(p.verbose, "Opening RFC connection: dest=" + p.dest + (p.inipath.empty() ? "" : " inipath=" + p.inipath));
+        else
+            vlog(p.verbose, "Opening RFC connection: host=" + p.hostname + " user=" + p.username + " sysnr=" + p.sysnr + " client=" + p.client);
         SAP_UC *uc_user=nullptr, *uc_pass=nullptr, *uc_host=nullptr;
         SAP_UC *uc_sid=nullptr,  *uc_sys=nullptr,  *uc_cli=nullptr;
 

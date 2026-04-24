@@ -135,7 +135,13 @@ inline RFC_CONNECTION_HANDLE openRfcConnection(
     RFC_ERROR_INFO& errInfo)
 {
     if (!p.inipath.empty()) {
-        auto uc_path = utf8ToSapUc(p.inipath, errInfo);
+        // RfcSetIniPath() expects a directory; strip trailing filename if user
+        // passed the full path to sapnwrfc.ini by mistake.
+        string dir = p.inipath;
+        if (dir.size() > 12 &&
+            dir.substr(dir.size() - 12) == "sapnwrfc.ini")
+            dir = dir.substr(0, dir.size() - 12);
+        auto uc_path = utf8ToSapUc(dir, errInfo);
         RfcSetIniPath(uc_path.get(), &errInfo);
     }
 
