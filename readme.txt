@@ -159,3 +159,7 @@ Here are some screenshots of a standalone sap_mon:
 
 For questions, bug reports, or suggestions, please open an issue at:
 https://github.com/krogoth/sap-mon/issues
+
+Credits:
+Originally created by Rocket-Search (https://github.com/Rocket-Search).
+This fork extends and refactors the original work.
