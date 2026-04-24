@@ -892,8 +892,11 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
     };
 
     // Default thresholds: warn=30 days, critical=7 days.
+    // For certificate expiry lower days = worse, so critical must be <= warn.
+    // Swap if the user accidentally provides them in the wrong order.
     long tw = p.warn.empty()     ? 30 : stol(p.warn);
     long tc = p.critical.empty() ?  7 : stol(p.critical);
+    if (tc > tw) swap(tc, tw);
 
     if (!p.subject.empty()) {
         // Single-certificate check: find first matching entry
