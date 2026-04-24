@@ -891,6 +891,10 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
         return diff / 86400;
     };
 
+    // Default thresholds: warn=30 days, critical=7 days.
+    long tw = p.warn.empty()     ? 30 : stol(p.warn);
+    long tc = p.critical.empty() ?  7 : stol(p.critical);
+
     if (!p.subject.empty()) {
         // Single-certificate check: find first matching entry
         for (const auto& entry : certlist_subj_valid) {
@@ -898,19 +902,12 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
             string subj, ctx, applic, expiry;
             long tage = parse_entry(entry, subj, ctx, applic, expiry);
             vlog(p.verbose, "Certificate expires in " + to_string(tage) + " days");
-            if (p.warn.empty()) { cout << tage << endl; return 0; }
-            long tw = stol(p.warn), tc = stol(p.critical);
             if (tage >= tw) { cout << "OK - "       << tage << endl; return 0; }
             if (tage >= tc) { cout << "WARNING - "  << tage << endl; return 1; }
                             { cout << "CRITICAL - " << tage << endl; return 2; }
         }
         return 0;
     }
-
-    // No subject: check every certificate, report worst case.
-    // Default thresholds: warn=30 days, critical=7 days.
-    long tw = p.warn.empty()     ? 30 : stol(p.warn);
-    long tc = p.critical.empty() ?  7 : stol(p.critical);
     int worst = 0;
     vector<string> lines;
 
@@ -1134,8 +1131,8 @@ static void print_help() {
 "  -sslcheck              Check certificate expiry\n"
 "    -subjectname=<subj>    Check a specific certificate by subject (substring match)\n"
 "                           Without -subjectname: checks all certificates, returns worst case\n"
-"    -warn=<days>           Warning threshold in days (default for all-cert check: 30)\n"
-"    -critical=<days>       Critical threshold in days (default for all-cert check: 7)\n"
+"    -warn=<days>           Warning threshold in days (default: 30)\n"
+"    -critical=<days>       Critical threshold in days (default: 7)\n"
 "  -rfc                   Test an RFC destination\n"
 "    -rfcdestination=<dst>  RFC destination name\n"
 "  -java                  Query a SAP Java/ABAP system via sapcontrol SOAP\n"
