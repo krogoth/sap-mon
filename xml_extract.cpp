@@ -77,7 +77,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
     size_t wo_J2EEHeap         = web_response.find("<SAPControl:J2EEGetVMHeapInfoResponse>");
 
     if (wo_exit11 != string::npos) {
-        cout << "\nFehler: " << web_response << endl;
+        cout << "\nError: " << web_response << endl;
         return -1;
     }
 
@@ -85,7 +85,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
      && wo_GetAlertTree   == string::npos && wo_J2EEProcess  == string::npos && wo_J2EEComponent == string::npos
      && wo_J2EEHeap       == string::npos)
     {
-        cout << "Fehler: " << web_response << endl;
+        cout << "Error: " << web_response << endl;
         return 2;
     }
 
@@ -95,7 +95,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
     size_t gt_pos = cmd_resp.find(">");
     cmd_resp = cmd_resp.substr(11, gt_pos - 11);
 
-    bool name_gefunden = false;
+    bool name_found = false;
     int retcode        = -1;
 
     if (cmd_resp == "GetProcessListResponse") {
@@ -109,7 +109,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
             auto dispstatus = v.second.get<string>("dispstatus");
 
             if (name.find(p.monitor) == string::npos) continue;
-            name_gefunden = true;
+            name_found = true;
             cout << name;
 
             if (dispstatus.find("SAPControl-GRAY")   != string::npos) { cout << " | GRAY | "   << textstatus << endl; retcode = 2; break; }
@@ -118,15 +118,15 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
             if (dispstatus.find("SAPControl-GREEN")  != string::npos) { cout << " | GREEN | "  << textstatus << endl; retcode = 0; break; }
             break;
         }
-        if (!name_gefunden) {
-            cout << "Prozess: " << p.monitor << " nicht gefunden" << endl;
-            cout << "SAP System gestoppt" << endl;
+        if (!name_found) {
+            cout << "Process: " << p.monitor << " not found" << endl;
+            cout << "SAP system stopped" << endl;
             retcode = 2;
         }
     }
 
     if (cmd_resp == "GetAlertsResponse") {
-        bool object_gefunden = false;
+        bool object_found = false;
         BOOST_FOREACH(boost::property_tree::ptree::value_type& v,
             ptree.get_child("SOAP-ENV:Envelope.SOAP-ENV:Body.SAPControl:GetAlertsResponse.alert"))
         {
@@ -137,7 +137,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
             auto dispstatus = v.second.get<string>("Value");
 
             if (name.find(p.monitor) == string::npos) continue;
-            object_gefunden = true;
+            object_found = true;
             cout << name;
 
             if (dispstatus.find("SAPControl-GRAY")   != string::npos) { cout << " | GRAY | "   << textstatus << endl; retcode = 2; break; }
@@ -146,8 +146,8 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
             if (dispstatus.find("SAPControl-GREEN")  != string::npos) { cout << " | GREEN | "  << textstatus << endl; retcode = 0; break; }
             break;
         }
-        if (!object_gefunden) {
-            cout << "Monitor: '" << p.monitor << "' nicht gefunden" << endl;
+        if (!object_found) {
+            cout << "Monitor: '" << p.monitor << "' not found" << endl;
             retcode = 2;
         }
     }
@@ -219,7 +219,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
             auto statetext = v.second.get<string>("statetext");
 
             if (name.find(p.monitor) == string::npos) continue;
-            name_gefunden = true;
+            name_found = true;
 
             if (statetext.find("Disabled") != string::npos) { cout << " | GRAY | "  << statetext << endl; retcode = 2; break; }
             if (statetext.find("Running")  != string::npos) { cout << " | GREEN | " << statetext << endl; retcode = 0; break; }
@@ -237,7 +237,7 @@ int xml_extract(const string& web_response, const CliParams& p, vector<string>& 
             auto status = v.second.get<string>("status");
 
             if (name.find(p.monitor) == string::npos) continue;
-            name_gefunden = true;
+            name_found = true;
 
             if (status.find("stopped") != string::npos) { cout << " | GRAY | "  << status << endl; retcode = 2; break; }
             if (status.find("running") != string::npos) { cout << " | GREEN | " << status << endl; retcode = 0; break; }

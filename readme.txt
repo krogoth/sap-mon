@@ -157,4 +157,5 @@ Usage:
 Here are some screenshots of a standalone sap_mon:
 
 
-For questions, suggestions or help, contact: software.moore@gmail.com
+For questions, bug reports, or suggestions, please open an issue at:
+https://github.com/krogoth/sap-mon/issues

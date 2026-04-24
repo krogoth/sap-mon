@@ -66,7 +66,7 @@ static string ucToStr(const SAP_UC* buf, unsigned len) {
 }
 
 // =============================================================================
-// SECTION 5 — Connexion RFC centralisée
+// SECTION 5 — RFC connection helpers
 // =============================================================================
 
 static inline void vlog(bool verbose, const string& msg) {
@@ -74,12 +74,11 @@ static inline void vlog(bool verbose, const string& msg) {
 }
 
 /**
- * checkConnection — affiche l'erreur et exit si la connexion a échoué.
+ * checkConnection — prints the error and exits if the connection failed.
  */
 void checkConnection(RFC_CONNECTION_HANDLE /*conn*/, const RFC_ERROR_INFO& errInfo) {
     if (errInfo.code != RFC_OK) {
         cout << "Login PROBLEM" << endl;
-        // Correction bug original : format string cohérent
         printfU(cU("key#     %s\n"), errInfo.key);
         printfU(cU("message# %s\n"), errInfo.message);
         printfU(cU("code#    %d\n"), errInfo.code);
@@ -88,7 +87,7 @@ void checkConnection(RFC_CONNECTION_HANDLE /*conn*/, const RFC_ERROR_INFO& errIn
 }
 
 /**
- * xmiLogon — invoque BAPI_XMI_LOGON, commun à plusieurs modes.
+ * xmiLogon — calls BAPI_XMI_LOGON, shared across multiple modes.
  * @param iface "XAL" ou "XBP"
  */
 void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& errInfo, bool verbose = false) {
@@ -131,15 +130,15 @@ void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& err
 }
 
 // =============================================================================
-// SECTION 6 — Handlers (un par mode)
+// SECTION 6 — Handlers (one per mode)
 // =============================================================================
 
-// Signature uniforme : connexion déjà ouverte + params CLI
+// Uniform signature: connection already open + CLI params
 using HandlerFn = function<int(RFC_CONNECTION_HANDLE, const CliParams&, RFC_ERROR_INFO&)>;
 
 // ----------------------------------------------------------------------------
 int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
-    cout << "Alle verfügbaren CCMS Monitore" << endl;
+    cout << "Available CCMS monitors" << endl;
 
     xmiLogon(conn, "XAL", errInfo, p.verbose);
 
@@ -269,11 +268,11 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
 
 // ----------------------------------------------------------------------------
 /**
- * Helper commun à -check et -checkall : résout le TID d'un MTE.
- * Retourne le RFC_FUNCTION_HANDLE de l'invocation GETTIDBYNAME — l'appelant
- * DOIT appeler RfcDestroyFunction(returned_handle) APRÈS avoir fini avec outTid,
- * car outTid est un pointeur dans la mémoire du handle (use-after-free sinon).
- * outMtclass reçoit la classe MTCLASS ("100", "101", "102", "111" …).
+ * Common helper for -check and -checkall: resolves the TID of an MTE.
+ * Returns the RFC_FUNCTION_HANDLE from the GETTIDBYNAME call — the caller
+ * MUST call RfcDestroyFunction(returned_handle) after finishing with outTid,
+ * because outTid points into the handle's memory (use-after-free otherwise).
+ * outMtclass receives the MTCLASS value ("100", "101", "102", "111" …).
  */
 static RFC_FUNCTION_HANDLE resolveMtClass(
     RFC_CONNECTION_HANDLE conn,
@@ -327,8 +326,8 @@ static RFC_FUNCTION_HANDLE resolveMtClass(
 }
 
 /**
- * Helper : lit la valeur courante d'un MTE selon sa classe et l'affiche.
- * Retourne la valeur sous forme string pour les comparaisons warn/critical.
+ * Helper: reads the current value of an MTE by its class and prints it.
+ * Returns the value as a string for warn/critical comparisons.
  */
 static string readMteValue(
     RFC_CONNECTION_HANDLE conn,
@@ -374,7 +373,7 @@ static string readMteValue(
     RfcGetString(returnStruct, cU("MESSAGE"), return_msg, sizeofU(return_msg), &resultLen, &errInfo);
     string err_utf8 = ucToStr(return_msg, resultLen);
     if (!err_utf8.empty()) {
-        cout << "Fehler: Monitor nicht definiert" << endl;
+        cout << "Error: monitor class not defined" << endl;
         RfcDestroyFunction(handle, &errInfo);
         return {};
     }
@@ -867,11 +866,11 @@ int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_I
         cout << "CRITICAL - ABAP Programm: " << abap_prg
              << " ### Runtime error: " << runtime
              << " ### Exception: "    << exception
-             << " ### Schweregrad: "  << severity
+             << " ### Severity: "     << severity
              << " ### Hostname: "     << host
              << " ### Username: "     << username
-             << " ### Datum: "        << datum
-             << " ### Uhrzeit: "      << uhrzeit << endl;
+             << " ### Date: "         << datum
+             << " ### Time: "         << uhrzeit << endl;
         return 2;
     }
     return 0;
@@ -879,7 +878,7 @@ int handle_abap_dump(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_I
 
 // ----------------------------------------------------------------------------
 int handle_sslview(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERROR_INFO& /*errInfo*/) {
-    cout << "Folgende Zertifikate mit dazugehörigem Ablaufdatum sind in der Zertifikatsliste aktiv" << endl << endl;
+    cout << "Active certificates with expiry dates" << endl << endl;
     auto certlist = ssfp_get_pseinfo(p);
     read_cert_infos(certlist, false);
     return 0;
@@ -996,19 +995,19 @@ void signalHandler(int signum) {
 // =============================================================================
 
 /**
- * Modes qui nécessitent une connexion RFC ouverte avant dispatch.
- * Les autres (ssl*, rfc, java*) gèrent leur propre connexion en interne.
+ * Modes that require an open RFC connection before dispatch.
+ * Others (ssl*, rfc, java*) manage their own connection internally.
  */
 static const set<string> RFC_CONNECTED_MODES = {
     "-show", "-check", "-checkall", "-aborted-job", "-abap-dump"
 };
 
-// sapUcArgToString supprimé — remplacé par conversion directe char-par-char dans parseArgsU
+// sapUcArgToString removed — replaced by direct char-by-char conversion in parseArgsU
 
 /**
- * parseArgsU — version SAP_UC** de parseArgs.
- * argv arrive déjà converti par le runtime SAP (via mainU).
- * Aucune conversion RfcUTF8ToSAPUC nécessaire sur les arguments CLI.
+ * parseArgsU — SAP_UC** entry point for argument parsing.
+ * argv is already converted by the SAP runtime (via mainU).
+ * No RfcUTF8ToSAPUC conversion needed for CLI arguments.
  */
 static CliParams parseArgsU(int argc, SAP_UC** argv) {
     if (argc < 2) throw std::runtime_error("Usage: sap_mon2 -<mode> [options]");
@@ -1016,8 +1015,8 @@ static CliParams parseArgsU(int argc, SAP_UC** argv) {
     CliParams p;
     map<string, string> kv;
 
-    // argv[1] = mode — conversion directe caractère par caractère (ASCII pur)
-    // sapUcToUtf8 nécessite g_errorInfo initialisé, pas garanti ici
+    // argv[1] = mode — direct char-by-char conversion (pure ASCII)
+    // sapUcToUtf8 requires g_errorInfo to be initialised, which is not guaranteed here
     {
         const SAP_UC* m = argv[1];
         string s;
@@ -1026,7 +1025,7 @@ static CliParams parseArgsU(int argc, SAP_UC** argv) {
     }
 
     for (int i = 2; i < argc; ++i) {
-        // Même conversion légère pour le parsing key=value
+        // Same lightweight conversion for key=value parsing
         const SAP_UC* arg = argv[i];
         string arg_str;
         while (arg && *arg) { arg_str += static_cast<char>(*arg); ++arg; }
@@ -1096,9 +1095,9 @@ static CliParams parseArgsU(int argc, SAP_UC** argv) {
 }
 
 /**
- * openRfcConnectionU — version directe SAP_UC** : les valeurs argv sont
- * déjà en SAP_UC*, on les passe directement sans conversion.
- * On garde openRfcConnection(CliParams) pour les handlers internes.
+ * openRfcConnectionDirect — takes raw SAP_UC* values from argv directly,
+ * avoiding a round-trip through UTF-8 conversion.
+ * openRfcConnection(CliParams) is kept for internal handlers.
  */
 RFC_CONNECTION_HANDLE openRfcConnectionDirect(
     const SAP_UC* username, const SAP_UC* password, const SAP_UC* hostname,

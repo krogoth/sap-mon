@@ -37,12 +37,12 @@ string web_srv(const CliParams& p, const string& soap_xml)
     struct curl_slist *header = NULL;
     header = curl_slist_append(header, "Content-Type: text/xml;charset=UTF-8");
 
-    char fehlerspeicher[CURL_ERROR_SIZE];
+    char curl_errbuf[CURL_ERROR_SIZE];
 
     if (p.http_proto == "http") {
         string url = "http://" + p.hostname + ":5" + sysnr2 + "13/?wdsl";
         curl_easy_setopt(curl, CURLOPT_URL,           url.c_str());
-        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER,   fehlerspeicher);
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER,   curl_errbuf);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT,       10L);
         curl_easy_setopt(curl, CURLOPT_USERNAME,      p.username.c_str());
         curl_easy_setopt(curl, CURLOPT_PASSWORD,      p.password.c_str());
@@ -54,7 +54,7 @@ string web_srv(const CliParams& p, const string& soap_xml)
 
         CURLcode rc = curl_easy_perform(curl);
         if (rc != CURLE_OK) {
-            cout << "Fehler #" << curl_easy_strerror(rc) << "#" << endl;
+            cout << "Error: " << curl_easy_strerror(rc) << endl;
             curl_easy_cleanup(curl);
             curl_slist_free_all(header);
             exit(1);
@@ -67,7 +67,7 @@ string web_srv(const CliParams& p, const string& soap_xml)
         // SSL verification disabled only when -insecure is explicitly passed
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,  p.insecure ? 0L : 1L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST,  p.insecure ? 0L : 2L);
-        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER,     fehlerspeicher);
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER,     curl_errbuf);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT,         10L);
         curl_easy_setopt(curl, CURLOPT_USERNAME,        p.username.c_str());
         curl_easy_setopt(curl, CURLOPT_PASSWORD,        p.password.c_str());
@@ -79,7 +79,7 @@ string web_srv(const CliParams& p, const string& soap_xml)
 
         CURLcode rc = curl_easy_perform(curl);
         if (rc != CURLE_OK) {
-            cout << "Fehler #" << curl_easy_strerror(rc) << "#" << endl;
+            cout << "Error: " << curl_easy_strerror(rc) << endl;
             curl_easy_cleanup(curl);
             curl_slist_free_all(header);
             exit(1);
