@@ -30,6 +30,7 @@ struct CliParams {
     std::string type;
     std::string psefile;
     std::string sapgenpse;
+    std::string monitor_set;        // -monitor-set: filter checkall by MS_NAME[\MONI_NAME]
     bool        insecure = false;  // -insecure: skip SSL peer/host verification (HTTPS only)
     bool        verbose  = false;  // -verbose/-v: print operation details to stderr
 };

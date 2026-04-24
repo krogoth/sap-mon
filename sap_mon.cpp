@@ -518,6 +518,14 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 
     vlog(p.verbose, "checkall: sid=" + sap_sid + " mtmc_filter=" + mtmc_filter + " obj_filter=" + obj_filter);
 
+    // Parse -monitor-set= path: MS_NAME[\MONI_NAME]
+    const string& ms_arg = p.monitor_set;
+    size_t ms_sep         = ms_arg.find('\\');
+    string ms_filter      = (ms_sep != string::npos) ? ms_arg.substr(0, ms_sep) : ms_arg;
+    string moni_filter    = (ms_sep != string::npos) ? ms_arg.substr(ms_sep + 1) : string{};
+    if (!ms_arg.empty())
+        vlog(p.verbose, "checkall: ms_filter='" + ms_filter + "' moni_filter='" + moni_filter + "'");
+
     // Enumerate all monitor sets, then walk each tree — same as -show.
     auto bapi_list = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
     if (!bapi_list) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETLIST failed");
@@ -542,6 +550,13 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         unsigned len_ms = 0, len_moni = 0;
         RfcGetString(monTable, cU("MS_NAME"),   ms_name,   sizeofU(ms_name),   &len_ms,   &errInfo);
         RfcGetString(monTable, cU("MONI_NAME"), moni_name, sizeofU(moni_name), &len_moni, &errInfo);
+
+        if (!ms_filter.empty()) {
+            string s_ms   = ucToStr(ms_name,   len_ms);
+            string s_moni = ucToStr(moni_name, len_moni);
+            if (s_ms != ms_filter) continue;
+            if (!moni_filter.empty() && s_moni != moni_filter) continue;
+        }
 
         auto bapi_tree = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
         if (!bapi_tree) continue;
@@ -1049,6 +1064,7 @@ static CliParams parseArgsU(int argc, SAP_UC** argv) {
     p.type       = get("type");
     p.psefile    = get("psefile");
     p.sapgenpse  = get("sapgenpse");
+    p.monitor_set = get("monitor-set");
     p.insecure   = kv.count("insecure") > 0;
     p.verbose    = kv.count("verbose") > 0 || kv.count("v") > 0;
 
@@ -1130,7 +1146,9 @@ static void print_help() {
 "                           Without thresholds, SAP's own CCMS alert color\n"
 "                           (ALCOLOR) is used to determine the exit code.\n"
 "  -checkall              Check all monitors under a monitor set\n"
-"    -monitor=<path>        Monitor set path: SID[\\MTMCNAME[\\OBJECTNAME]]\n"
+"    -monitor=<path>        Filter by MTE path: SID[\\MTMCNAME[\\OBJECTNAME]]\n"
+"    -monitor-set=<path>    Filter by template path: MS_NAME[\\MONI_NAME]\n"
+"                           e.g. 'SAP CCMS Monitor Templates\\Dialog Overview'\n"
 "                           Uses SAP's CCMS ALCOLOR for exit codes.\n"
 "  -aborted-job           Check for aborted background jobs\n"
 "  -abap-dump             Check for ABAP short dumps\n"
