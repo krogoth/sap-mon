@@ -27,6 +27,7 @@
 #include <memory>
 #include <stdexcept>
 #include <optional>
+#include <numeric>
 
 #include <curl/curl.h>
 #include "sap_utils.h"
@@ -75,7 +76,7 @@ static inline void vlog(bool verbose, const string& msg) {
 /**
  * checkConnection — affiche l'erreur et exit si la connexion a échoué.
  */
-void checkConnection(RFC_CONNECTION_HANDLE conn, const RFC_ERROR_INFO& errInfo) {
+void checkConnection(RFC_CONNECTION_HANDLE /*conn*/, const RFC_ERROR_INFO& errInfo) {
     if (errInfo.code != RFC_OK) {
         cout << "Login PROBLEM" << endl;
         // Correction bug original : format string cohérent
@@ -108,14 +109,16 @@ void xmiLogon(RFC_CONNECTION_HANDLE conn, const char* iface, RFC_ERROR_INFO& err
     RfcInvoke(conn, handle, &errInfo);
 
     RFC_STRUCTURE_HANDLE returnStruct;
-    SAP_UC ret_type[4]     = iU("");
-    SAP_UC ret_msg[8192]   = iU("");
-    unsigned typeLen = 0, msgLen = 0;
     RfcGetStructure(handle, cU("RETURN"), &returnStruct, &errInfo);
-    RfcGetString(returnStruct, cU("TYPE"),    ret_type, sizeofU(ret_type),  &typeLen, &errInfo);
-    RfcGetString(returnStruct, cU("MESSAGE"), ret_msg,  sizeofU(ret_msg),   &msgLen,  &errInfo);
 
+    SAP_UC ret_type[4]   = iU("");
+    unsigned typeLen = 0;
+    RfcGetString(returnStruct, cU("TYPE"),    ret_type, sizeofU(ret_type),  &typeLen, &errInfo);
     string type_str = ucToStr(ret_type, typeLen);
+
+    SAP_UC ret_msg[8192] = iU("");
+    unsigned msgLen = 0;
+    RfcGetString(returnStruct, cU("MESSAGE"), ret_msg,  sizeofU(ret_msg),   &msgLen,  &errInfo);
     string msg_str  = ucToStr(ret_msg,  msgLen);
 
     RfcDestroyFunction(handle, &errInfo);
@@ -243,9 +246,10 @@ int handle_show(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& 
                     monitor_path = sysid + "\\" + n.mtmcname + "\\" + n.objname + "\\" + n.name;
                 } else {
                     // Fallback: full stack path
-                    monitor_path = sysid;
-                    for (const auto& seg : pathStack) monitor_path += "\\" + seg;
-                    monitor_path += "\\" + n.name;
+                    monitor_path = std::accumulate(
+                        pathStack.begin(), pathStack.end(), sysid,
+                        [](const string& acc, const string& seg) { return acc + "\\" + seg; })
+                        + "\\" + n.name;
                 }
                 if (p.verbose)
                     cerr << "[v]   mtmcname='" << n.mtmcname << "' objname='" << n.objname << "'\n";
@@ -1070,8 +1074,8 @@ static CliParams parseArgsU(int argc, SAP_UC** argv) {
  * On garde openRfcConnection(CliParams) pour les handlers internes.
  */
 RFC_CONNECTION_HANDLE openRfcConnectionDirect(
-    SAP_UC* username, SAP_UC* password, SAP_UC* hostname,
-    SAP_UC* sid,      SAP_UC* sysnr,   SAP_UC* client,
+    const SAP_UC* username, const SAP_UC* password, const SAP_UC* hostname,
+    const SAP_UC* sid,      const SAP_UC* sysnr,   const SAP_UC* client,
     RFC_ERROR_INFO& errInfo)
 {
     const RFC_CONNECTION_PARAMETER loginParams[] = {

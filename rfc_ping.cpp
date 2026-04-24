@@ -27,8 +27,8 @@ int rfc_ping(const CliParams& p, string& out_message)
         return 2;
     }
 
-    RFC_FUNCTION_DESC_HANDLE ccms_bapi_handle;
-    RFC_FUNCTION_HANDLE rfc_handle;
+    RFC_FUNCTION_DESC_HANDLE ccms_bapi_handle = nullptr;
+    RFC_FUNCTION_HANDLE rfc_handle            = nullptr;
 
     ccms_bapi_handle = RfcGetFunctionDesc(conn, cU("/BDL/RFC_CHECK"), &errorInfo);
     if (!ccms_bapi_handle) { out_message = "RfcGetFunctionDesc /BDL/RFC_CHECK failed"; return 2; }
@@ -66,18 +66,20 @@ int rfc_ping(const CliParams& p, string& out_message)
             string ping_msg = sapUcToUtf8(ping_sap_uc, errorInfo);
             out_message = ping_msg;
 
-            if (ping_msg.find("HTTP Ping successful.") != string::npos)
+            if (ping_msg.find("HTTP Ping successful.") != string::npos) {
                 retcode = 0;
-            else
+            } else {
                 retcode = 2;
+            }
         } else {
             out_message = error_msg;
             retcode = 2;
         }
     }
 
-    if (strlenU(check_ok_sap_uc) != 0)
+    if (strlenU(check_ok_sap_uc) != 0) {
         retcode = 0;
+    }
 
     RfcDestroyFunction(rfc_handle, &errorInfo);
     RfcCloseConnection(conn, &errorInfo);
