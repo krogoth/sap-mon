@@ -143,6 +143,7 @@ inline RFC_CONNECTION_HANDLE openRfcConnection(
             dir = dir.substr(0, dir.size() - 12);
         auto uc_path = utf8ToSapUc(dir, errInfo);
         RfcSetIniPath(uc_path.get(), &errInfo);
+        RfcReloadIniFile(&errInfo);
     }
 
     storage.clear();
