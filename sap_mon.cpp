@@ -921,9 +921,9 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
         if (rc == 0) continue;
         if (rc > worst) worst = rc;
         string label = (rc == 2) ? "CRITICAL" : "WARNING";
-        lines.push_back(label + " - " + subj
+        lines.push_back(label + " - " + ctx + "/" + applic + " - " + subj
                         + " expires in " + to_string(tage) + " days"
-                        + " (" + ctx + "/" + applic + ", " + expiry + ")");
+                        + " (" + expiry + ")");
     }
 
     if (worst == 0) {
