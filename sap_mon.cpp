@@ -908,12 +908,9 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
     }
 
     // No subject: check every certificate, report worst case.
-    // Requires -warn and -critical thresholds.
-    if (p.warn.empty()) {
-        cout << "OK - " << certlist_subj_valid.size() << " certificate(s) checked" << endl;
-        return 0;
-    }
-    long tw = stol(p.warn), tc = stol(p.critical);
+    // Default thresholds: warn=30 days, critical=7 days.
+    long tw = p.warn.empty()     ? 30 : stol(p.warn);
+    long tc = p.critical.empty() ?  7 : stol(p.critical);
     int worst = 0;
     vector<string> lines;
 
@@ -1134,10 +1131,11 @@ static void print_help() {
 "  -aborted-job           Check for aborted background jobs\n"
 "  -abap-dump             Check for ABAP short dumps\n"
 "  -sslview               List all X.509 certificates with expiry dates\n"
-"  -sslcheck              Check expiry of a specific certificate\n"
-"    -subjectname=<subj>    Certificate subject to check\n"
-"    -warn=<days>           Warning threshold in days\n"
-"    -critical=<days>       Critical threshold in days\n"
+"  -sslcheck              Check certificate expiry\n"
+"    -subjectname=<subj>    Check a specific certificate by subject (substring match)\n"
+"                           Without -subjectname: checks all certificates, returns worst case\n"
+"    -warn=<days>           Warning threshold in days (default for all-cert check: 30)\n"
+"    -critical=<days>       Critical threshold in days (default for all-cert check: 7)\n"
 "  -rfc                   Test an RFC destination\n"
 "    -rfcdestination=<dst>  RFC destination name\n"
 "  -java                  Query a SAP Java/ABAP system via sapcontrol SOAP\n"

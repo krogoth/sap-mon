@@ -119,8 +119,15 @@ Usage:
 #SSL certificate list
 ./sap_mon -sslview -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100
 
-#Check a single certificate expiry
-./sap_mon -sslcheck -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -subjectname='C=DE, O=SAP Trust Community, OU=SAP Web AS, OU=I0020785703, CN=saplnx.moore.corp' -warn=30 -critical=15
+#Check all certificates — returns worst case across every PSE (own cert + CA trust list).
+#Default thresholds: warn=30 days, critical=7 days.
+./sap_mon -sslcheck -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100
+
+#Check all certificates with custom thresholds
+./sap_mon -sslcheck -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -warn=60 -critical=30
+
+#Check a specific certificate by subject (substring match)
+./sap_mon -sslcheck -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -subjectname='C=DE, O=SAP Trust Community, OU=SAP Web AS, OU=I0020785703, CN=saplnx.moore.corp' -warn=30 -critical=7
 
 #RFC connection test
 ./sap_mon -rfc -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -rfcdestination='AL1'
