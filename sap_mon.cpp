@@ -1259,31 +1259,32 @@ int mainU(int argc, SAP_UC** argv) {
     vector<SapUcString> ucStorage;
 
     if (RFC_CONNECTED_MODES.count(p.mode)) {
-        if (!p.dest.empty())
+        if (!p.dest.empty()) {
             vlog(p.verbose, "Opening RFC connection: dest=" + p.dest + (p.inipath.empty() ? "" : " inipath=" + p.inipath));
-        else
+            conn = openRfcConnection(p, ucStorage, g_errorInfo);
+        } else {
             vlog(p.verbose, "Opening RFC connection: host=" + p.hostname + " user=" + p.username + " sysnr=" + p.sysnr + " client=" + p.client);
-        SAP_UC *uc_user=nullptr, *uc_pass=nullptr, *uc_host=nullptr;
-        SAP_UC *uc_sid=nullptr,  *uc_sys=nullptr,  *uc_cli=nullptr;
+            SAP_UC *uc_user=nullptr, *uc_pass=nullptr, *uc_host=nullptr;
+            SAP_UC *uc_sid=nullptr,  *uc_sys=nullptr,  *uc_cli=nullptr;
 
-        // Conversion directe SAP_UC→char ASCII (même logique que parseArgsU)
-        auto toStr = [](const SAP_UC* p) -> string {
-            string s; while (p && *p) { s += static_cast<char>(*p); ++p; } return s;
-        };
+            auto toStr = [](const SAP_UC* p) -> string {
+                string s; while (p && *p) { s += static_cast<char>(*p); ++p; } return s;
+            };
 
-        for (int i = 2; i < argc; ++i) {
-            string key = toStr(argv[i]);
-            if      (key.find("-username=") != string::npos) uc_user = const_cast<SAP_UC*>(sapUcValue(argv[i]));
-            else if (key.find("-password=") != string::npos) uc_pass = const_cast<SAP_UC*>(sapUcValue(argv[i]));
-            else if (key.find("-hostname=") != string::npos) uc_host = const_cast<SAP_UC*>(sapUcValue(argv[i]));
-            else if (key.find("-sid=")      != string::npos) uc_sid  = const_cast<SAP_UC*>(sapUcValue(argv[i]));
-            else if (key.find("-sysnum=")   != string::npos) uc_sys  = const_cast<SAP_UC*>(sapUcValue(argv[i]));
-            else if (key.find("-client=")   != string::npos) uc_cli  = const_cast<SAP_UC*>(sapUcValue(argv[i]));
+            for (int i = 2; i < argc; ++i) {
+                string key = toStr(argv[i]);
+                if      (key.find("-username=") != string::npos) uc_user = const_cast<SAP_UC*>(sapUcValue(argv[i]));
+                else if (key.find("-password=") != string::npos) uc_pass = const_cast<SAP_UC*>(sapUcValue(argv[i]));
+                else if (key.find("-hostname=") != string::npos) uc_host = const_cast<SAP_UC*>(sapUcValue(argv[i]));
+                else if (key.find("-sid=")      != string::npos) uc_sid  = const_cast<SAP_UC*>(sapUcValue(argv[i]));
+                else if (key.find("-sysnum=")   != string::npos) uc_sys  = const_cast<SAP_UC*>(sapUcValue(argv[i]));
+                else if (key.find("-client=")   != string::npos) uc_cli  = const_cast<SAP_UC*>(sapUcValue(argv[i]));
+            }
+
+            conn = openRfcConnectionDirect(
+                uc_user, uc_pass, uc_host, uc_sid, uc_sys, uc_cli,
+                g_errorInfo);
         }
-
-        conn = openRfcConnectionDirect(
-            uc_user, uc_pass, uc_host, uc_sid, uc_sys, uc_cli,
-            g_errorInfo);
         checkConnection(conn, g_errorInfo);
         vlog(p.verbose, "RFC connection established");
     }

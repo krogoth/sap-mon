@@ -144,12 +144,16 @@ inline RFC_CONNECTION_HANDLE openRfcConnection(
         auto uc_path = utf8ToSapUc(dir, errInfo);
         RFC_RC rc1 = RfcSetIniPath(uc_path.get(), &errInfo);
         if (rc1 != RFC_OK)
-            fprintf(stderr, "[inipath] RfcSetIniPath failed: code=%d key=%ls msg=%ls\n",
-                    errInfo.code, errInfo.key, errInfo.message);
+            fprintf(stderr, "[inipath] RfcSetIniPath failed: code=%d key=%s msg=%s\n",
+                    errInfo.code,
+                    sapUcToUtf8(errInfo.key,     errInfo).c_str(),
+                    sapUcToUtf8(errInfo.message, errInfo).c_str());
         RFC_RC rc2 = RfcReloadIniFile(&errInfo);
         if (rc2 != RFC_OK)
-            fprintf(stderr, "[inipath] RfcReloadIniFile failed: code=%d key=%ls msg=%ls\n",
-                    errInfo.code, errInfo.key, errInfo.message);
+            fprintf(stderr, "[inipath] RfcReloadIniFile failed: code=%d key=%s msg=%s\n",
+                    errInfo.code,
+                    sapUcToUtf8(errInfo.key,     errInfo).c_str(),
+                    sapUcToUtf8(errInfo.message, errInfo).c_str());
         else
             fprintf(stderr, "[inipath] INI loaded from: %s\n", dir.c_str());
     }
