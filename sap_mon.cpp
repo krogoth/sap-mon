@@ -873,32 +873,68 @@ int handle_sslcheck(RFC_CONNECTION_HANDLE /*conn*/, const CliParams& p, RFC_ERRO
     vlog(p.verbose, "Certificates retrieved: " + to_string(certlist.size()));
     auto certlist_subj_valid = read_cert_infos(certlist, true);
 
-    string subject_suchen = p.subject;
+    // Helper: parse "Subject;;;CONTEXT;;;APPLIC;;;###ValidUntil" entry
+    // Returns days until expiry; fills subject/context/applic/expiry out-params.
+    auto parse_entry = [](const string& entry,
+                          string& subj, string& ctx, string& applic, string& expiry) -> long {
+        size_t s1  = entry.find(";;;");
+        size_t wt  = entry.find(";;;###");
+        subj       = entry.substr(0, s1);
+        string mid = entry.substr(s1 + 3, wt - s1 - 3);  // "CONTEXT;;;APPLIC"
+        size_t s2  = mid.find(";;;");
+        ctx        = mid.substr(0, s2);
+        applic     = mid.substr(s2 + 3);
+        expiry     = entry.substr(wt + 6);
+        struct tm zeit{};
+        strptime(expiry.c_str(), "%b %d %H:%M:%S %Y %Z", &zeit);
+        long diff = static_cast<long>(mktime(&zeit)) - static_cast<long>(std::time(nullptr));
+        return diff / 86400;
+    };
+
+    if (!p.subject.empty()) {
+        // Single-certificate check: find first matching entry
+        for (const auto& entry : certlist_subj_valid) {
+            if (entry.find(p.subject) == string::npos) continue;
+            string subj, ctx, applic, expiry;
+            long tage = parse_entry(entry, subj, ctx, applic, expiry);
+            vlog(p.verbose, "Certificate expires in " + to_string(tage) + " days");
+            if (p.warn.empty()) { cout << tage << endl; return 0; }
+            long tw = stol(p.warn), tc = stol(p.critical);
+            if (tage >= tw) { cout << "OK - "       << tage << endl; return 0; }
+            if (tage >= tc) { cout << "WARNING - "  << tage << endl; return 1; }
+                            { cout << "CRITICAL - " << tage << endl; return 2; }
+        }
+        return 0;
+    }
+
+    // No subject: check every certificate, report worst case.
+    // Requires -warn and -critical thresholds.
+    if (p.warn.empty()) {
+        cout << "OK - " << certlist_subj_valid.size() << " certificate(s) checked" << endl;
+        return 0;
+    }
+    long tw = stol(p.warn), tc = stol(p.critical);
+    int worst = 0;
+    vector<string> lines;
 
     for (const auto& entry : certlist_subj_valid) {
-        if (entry.find(subject_suchen) == string::npos) continue;
-
-        size_t wt = entry.find(";;;###");
-        string valid_until = entry.substr(wt + 6);
-
-        struct tm zeit{};
-        strptime(valid_until.c_str(), "%b %d %H:%M:%S %Y %Z", &zeit);
-
-        time_t now         = std::time(nullptr);
-        long diff_sec      = static_cast<long>(mktime(&zeit)) - static_cast<long>(now);
-        long tage          = diff_sec / 60 / 60 / 24;
-
-        vlog(p.verbose, "Certificate expires in " + to_string(tage) + " days");
-        if (p.warn.empty()) { cout << tage << endl; return 0; }
-
-        long tage_warn     = stol(p.warn);
-        long tage_critical = stol(p.critical);
-
-        if (tage >= tage_warn)     { cout << "OK - "       << tage << endl; return 0; }
-        if (tage >= tage_critical) { cout << "WARNING - "  << tage << endl; return 1; }
-                                   { cout << "CRITICAL - " << tage << endl; return 2; }
+        string subj, ctx, applic, expiry;
+        long tage = parse_entry(entry, subj, ctx, applic, expiry);
+        int rc = (tage < tc) ? 2 : (tage < tw) ? 1 : 0;
+        if (rc == 0) continue;
+        if (rc > worst) worst = rc;
+        string label = (rc == 2) ? "CRITICAL" : "WARNING";
+        lines.push_back(label + " - " + subj
+                        + " expires in " + to_string(tage) + " days"
+                        + " (" + ctx + "/" + applic + ", " + expiry + ")");
     }
-    return 0;
+
+    if (worst == 0) {
+        cout << "OK - " << certlist_subj_valid.size() << " certificate(s) valid" << endl;
+        return 0;
+    }
+    for (const auto& l : lines) cout << l << "\n";
+    return worst;
 }
 
 // ----------------------------------------------------------------------------

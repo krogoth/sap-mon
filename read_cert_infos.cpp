@@ -28,7 +28,9 @@ vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_ch
 
     for (size_t i = 0; i < certlist_array.size(); ++i) {
         size_t sep = certlist_array[i].find(";;;");
-        string cert_hex = certlist_array[i].substr(0, sep);
+        string cert_hex   = certlist_array[i].substr(0, sep);
+        // Preserve "CONTEXT;;;APPLIC" suffix so callers can report it
+        string ctx_applic = (sep != string::npos) ? certlist_array[i].substr(sep + 3) : "";
 
         if (cert_hex.empty() || cert_hex.size() % 2 != 0)
             continue;
@@ -83,7 +85,8 @@ vector<string> read_cert_infos(const vector<string>& certlist_array, bool ssl_ch
         if (!ssl_check)
             cout << " Expires: " << expiry << "\n";
 
-        certlist_subj_valid_until.push_back(subj_string + ";;;###" + expiry);
+        // Output format: "Subject;;;CONTEXT;;;APPLIC;;;###ValidUntil"
+        certlist_subj_valid_until.push_back(subj_string + ";;;" + ctx_applic + ";;;###" + expiry);
 
         X509_free(x509);
     }
