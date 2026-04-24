@@ -142,8 +142,16 @@ inline RFC_CONNECTION_HANDLE openRfcConnection(
             dir.substr(dir.size() - 12) == "sapnwrfc.ini")
             dir = dir.substr(0, dir.size() - 12);
         auto uc_path = utf8ToSapUc(dir, errInfo);
-        RfcSetIniPath(uc_path.get(), &errInfo);
-        RfcReloadIniFile(&errInfo);
+        RFC_RC rc1 = RfcSetIniPath(uc_path.get(), &errInfo);
+        if (rc1 != RFC_OK)
+            fprintf(stderr, "[inipath] RfcSetIniPath failed: code=%d key=%ls msg=%ls\n",
+                    errInfo.code, errInfo.key, errInfo.message);
+        RFC_RC rc2 = RfcReloadIniFile(&errInfo);
+        if (rc2 != RFC_OK)
+            fprintf(stderr, "[inipath] RfcReloadIniFile failed: code=%d key=%ls msg=%ls\n",
+                    errInfo.code, errInfo.key, errInfo.message);
+        else
+            fprintf(stderr, "[inipath] INI loaded from: %s\n", dir.c_str());
     }
 
     storage.clear();
