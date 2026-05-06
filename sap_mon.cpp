@@ -612,20 +612,25 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
                 uc_mtmc2.get(), uc_mte2.get(), uc_obj2.get(), uc_sys2.get(),
                 tid, mtclass, errInfo, p.verbose);
 
-            string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose);
+            int live_color = 0;
+            string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose, &live_color);
             RfcDestroyFunction(tid_fn, &errInfo);
 
-            // Determine node exit code from CCMS ALCOLOR when available,
-            // otherwise fall back to value-based logic for status MTEs.
+            // Color source: prefer the live BAPI color (same source as -check) so we
+            // always reflect the current MTE state, not a potentially stale tree ALCOLOR.
+            // Fall back to tree ALCOLOR when the BAPI returns no color (e.g. class 111).
             int node_rc = 0;
             string s_alcolor = (colorErr.code == RFC_OK) ? ucToStr(alcolor_buf, min(lcolor, 2u)) : "";
-            if (!s_alcolor.empty()) {
+            vlog(p.verbose, "ALCOLOR=" + (s_alcolor.empty() ? "(none)" : s_alcolor)
+                          + " live_color=" + to_string(live_color));
+            if (live_color > 0) {
+                if      (live_color == 3) node_rc = 2;
+                else if (live_color == 2) node_rc = 1;
+            } else if (!s_alcolor.empty()) {
                 int color = 0;
                 try { color = stoi(s_alcolor); } catch (...) {}
-                if      (color == 3) node_rc = 2;  // red   → CRITICAL
-                else if (color == 2) node_rc = 1;  // yellow→ WARNING
-            } else if ((s_cls == "102" || s_cls == "101") && !value.empty()) {
-                node_rc = 2;  // status MTE with message → CRITICAL
+                if      (color == 3) node_rc = 2;  // red    → CRITICAL
+                else if (color == 2) node_rc = 1;  // yellow → WARNING
             }
             worst_rc = max(worst_rc, node_rc);
 
