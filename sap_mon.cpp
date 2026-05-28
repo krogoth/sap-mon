@@ -590,6 +590,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         // Step 2: feed nodes into BAPI_SYSTEM_MT_GETALERTDATA (TREE_NODES is bidirectional).
         // The BAPI enriches each node with HIGHALVAL (highest open alert color).
         auto h_alert = RfcCreateFunction(bapi_alert_desc, &errInfo);
+        RfcSetChars(h_alert, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
         RFC_TABLE_HANDLE alertTreeTable;
         RfcGetTable(h_alert, cU("TREE_NODES"), &alertTreeTable, &errInfo);
 
