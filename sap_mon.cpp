@@ -621,8 +621,9 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 
         RfcInvoke(conn, h_alert, &errInfo);
 
-        // Step 3: build ALUNIQNUM → MSG map from ALERT_DATA for message lookup
-        map<string, string> aluniqnum_to_msg;
+        // Step 3: build (MTSYSID\MTMCNAME\MTUID) → [MSG, ...] from ALERT_DATA.
+        // One node can have multiple open alerts, so we collect them all.
+        map<string, vector<string>> node_to_msgs;
         {
             unsigned alertCount = 0;
             RFC_TABLE_HANDLE alertData;
@@ -631,14 +632,19 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             vlog(p.verbose, "ALERT_DATA rows: " + to_string(alertCount));
             for (unsigned k = 0; k < alertCount; ++k) {
                 RfcMoveTo(alertData, k, &errInfo);
-                SAP_UC uniq[64] = iU(""), msg[4096] = iU("");
-                unsigned luniq = 0, lmsg = 0;
-                RfcGetString(alertData, cU("ALUNIQNUM"), uniq, sizeofU(uniq), &luniq, &errInfo);
-                RfcGetString(alertData, cU("MSG"),       msg,  sizeofU(msg),  &lmsg,  &errInfo);
-                string s_uniq = ucToStr(uniq, luniq);
-                string s_msg  = ucToStr(msg,  lmsg);
-                if (!s_uniq.empty() && !s_msg.empty())
-                    aluniqnum_to_msg[s_uniq] = s_msg;
+                SAP_UC sys[256]=iU(""), mtmc[4096]=iU(""), msg[4096]=iU("");
+                unsigned lsys=0, lmtmc=0, lmsg=0;
+                RFC_INT mtuid_val = 0;
+                RfcGetString(alertData, cU("MTSYSID"),  sys,  sizeofU(sys),  &lsys,  &errInfo);
+                RfcGetString(alertData, cU("MTMCNAME"), mtmc, sizeofU(mtmc), &lmtmc, &errInfo);
+                RfcGetInt   (alertData, cU("MTUID"),    &mtuid_val,           &errInfo);
+                RfcGetString(alertData, cU("MSG"),      msg,  sizeofU(msg),  &lmsg,  &errInfo);
+                string s_msg = ucToStr(msg, lmsg);
+                if (s_msg.empty()) continue;
+                string nodekey = ucToStr(sys, lsys) + "\\"
+                               + ucToStr(mtmc, lmtmc) + "\\"
+                               + to_string(mtuid_val);
+                node_to_msgs[nodekey].push_back(s_msg);
             }
         }
 
@@ -649,15 +655,16 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         for (unsigned j = 0; j < enrichedCount; ++j) {
             RfcMoveTo(alertTreeTable, j, &errInfo);
             SAP_UC sys[256]=iU(""), mtmc[4096]=iU(""), obj[4096]=iU(""), mte[4096]=iU(""), cls[16]=iU("");
-            SAP_UC highalval_buf[8]=iU(""), aluniq_buf[64]=iU("");
-            unsigned lsys=0, lmtmc=0, lobj=0, lmte=0, lcls=0, lhigh=0, luniq=0;
+            SAP_UC highalval_buf[8]=iU("");
+            RFC_INT mtuid_val = 0;
+            unsigned lsys=0, lmtmc=0, lobj=0, lmte=0, lcls=0, lhigh=0;
             RfcGetString(alertTreeTable, cU("MTSYSID"),    sys,           sizeofU(sys),           &lsys,  &errInfo);
             RfcGetString(alertTreeTable, cU("MTMCNAME"),   mtmc,          sizeofU(mtmc),          &lmtmc, &errInfo);
             RfcGetString(alertTreeTable, cU("OBJECTNAME"), obj,           sizeofU(obj),           &lobj,  &errInfo);
             RfcGetString(alertTreeTable, cU("MTNAMESHRT"), mte,           sizeofU(mte),           &lmte,  &errInfo);
             RfcGetString(alertTreeTable, cU("MTCLASS"),    cls,           sizeofU(cls),           &lcls,  &errInfo);
             RfcGetString(alertTreeTable, cU("HIGHALVAL"),  highalval_buf, sizeofU(highalval_buf), &lhigh, &errInfo);
-            RfcGetString(alertTreeTable, cU("ALUNIQNUM"),  aluniq_buf,    sizeofU(aluniq_buf),    &luniq, &errInfo);
+            RfcGetInt   (alertTreeTable, cU("MTUID"),      &mtuid_val,                            &errInfo);
 
             string s_sys  = ucToStr(sys,  lsys);
             string s_mtmc = ucToStr(mtmc, lmtmc);
@@ -673,25 +680,26 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             if (!seen.insert(key).second) continue;
 
             string s_highalval = ucToStr(highalval_buf, min(lhigh, 2u));
-            string s_aluniq    = ucToStr(aluniq_buf,    luniq);
             int highal = 0;
             try { if (!s_highalval.empty()) highal = stoi(s_highalval); } catch (...) {}
             vlog(p.verbose, "HIGHALVAL=" + (s_highalval.empty() ? "(none)" : s_highalval)
-                          + " ALUNIQNUM=" + s_aluniq);
+                          + " MTUID=" + to_string(mtuid_val));
 
             int node_rc = (highal == 3) ? 2 : (highal == 2) ? 1 : 0;
             worst_rc = max(worst_rc, node_rc);
 
-            string value;
-            if (node_rc > 0) {
-                auto it = aluniqnum_to_msg.find(s_aluniq);
-                if (it != aluniqnum_to_msg.end()) value = it->second;
-            }
-
             const char* label = (node_rc == 2) ? "CRIT" : (node_rc == 1) ? "WARN" : "OK  ";
-            cout << label << "  " << s_sys << "\\" << s_mtmc << "\\" << s_obj << "\\" << s_mte;
-            if (!value.empty()) cout << "  " << value;
-            cout << "\n";
+            string path = s_sys + "\\" + s_mtmc + "\\" + s_obj + "\\" + s_mte;
+            cout << label << "  " << path << "\n";
+
+            if (node_rc > 0) {
+                string nodekey = s_sys + "\\" + s_mtmc + "\\" + to_string(mtuid_val);
+                auto it = node_to_msgs.find(nodekey);
+                if (it != node_to_msgs.end()) {
+                    for (const string& msg : it->second)
+                        cout << "      " << msg << "\n";
+                }
+            }
         }
 
         RfcDestroyFunction(h_alert, &errInfo);
