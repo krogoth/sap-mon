@@ -497,35 +497,32 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
 }
 
 // ----------------------------------------------------------------------------
-// Alert color source: ALCOLOR field in TREE_NODES returned by
-// BAPI_SYSTEM_MON_GETTREE.  This is the pre-computed traffic-light color
-// stored in the monitor tree (same value shown in RZ20), updated by the CCMS
-// background collector — may lag slightly behind the live alert state.
+// Color source: HIGHALVAL in TREE_NODES enriched by BAPI_SYSTEM_MT_GETALERTDATA.
+// HIGHALVAL reflects the highest open/unacknowledged alert color for the node,
+// consistent with what RZ20 displays after operator acknowledgement.
 int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO& errInfo) {
     xmiLogon(conn, "XAL", errInfo, p.verbose);
 
     // Parse -monitor= path: SID[\MTMCNAME[\OBJECTNAME]]
-    // Filters tree nodes by MTMCNAME and/or OBJECTNAME; empty = match all.
     const string& mon = p.monitor;
     size_t bs1 = mon.find('\\');
     size_t bs2 = (bs1 != string::npos) ? mon.find('\\', bs1 + 1) : string::npos;
-    string sap_sid      = (bs1 != string::npos) ? mon.substr(0, bs1) : mon;
-    string mtmc_filter  = (bs1 != string::npos && bs2 != string::npos) ? mon.substr(bs1 + 1, bs2 - bs1 - 1)
-                        : (bs1 != string::npos)                        ? mon.substr(bs1 + 1)
-                        : string{};
-    string obj_filter   = (bs2 != string::npos) ? mon.substr(bs2 + 1) : string{};
+    string sap_sid     = (bs1 != string::npos) ? mon.substr(0, bs1) : mon;
+    string mtmc_filter = (bs1 != string::npos && bs2 != string::npos) ? mon.substr(bs1 + 1, bs2 - bs1 - 1)
+                       : (bs1 != string::npos)                        ? mon.substr(bs1 + 1)
+                       : string{};
+    string obj_filter  = (bs2 != string::npos) ? mon.substr(bs2 + 1) : string{};
 
     vlog(p.verbose, "checkall: sid=" + sap_sid + " mtmc_filter=" + mtmc_filter + " obj_filter=" + obj_filter);
 
     // Parse -monitor-set= path: MS_NAME[\MONI_NAME]
     const string& ms_arg = p.monitor_set;
-    size_t ms_sep         = ms_arg.find('\\');
-    string ms_filter      = (ms_sep != string::npos) ? ms_arg.substr(0, ms_sep) : ms_arg;
-    string moni_filter    = (ms_sep != string::npos) ? ms_arg.substr(ms_sep + 1) : string{};
+    size_t ms_sep        = ms_arg.find('\\');
+    string ms_filter     = (ms_sep != string::npos) ? ms_arg.substr(0, ms_sep) : ms_arg;
+    string moni_filter   = (ms_sep != string::npos) ? ms_arg.substr(ms_sep + 1) : string{};
     if (!ms_arg.empty())
         vlog(p.verbose, "checkall: ms_filter='" + ms_filter + "' moni_filter='" + moni_filter + "'");
 
-    // Enumerate all monitor sets, then walk each tree — same as -show.
     auto bapi_list = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETLIST"), &errInfo);
     if (!bapi_list) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MON_GETLIST failed");
     auto h_list = RfcCreateFunction(bapi_list, &errInfo);
@@ -538,10 +535,19 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
     RfcGetRowCount(monTable, &monCount, &errInfo);
     vlog(p.verbose, "Monitor sets: " + to_string(monCount));
 
+    // Get BAPI_SYSTEM_MT_GETALERTDATA descriptor and BAPITNDEXT type info once.
+    auto bapi_alert_desc = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MT_GETALERTDATA"), &errInfo);
+    if (!bapi_alert_desc) throw std::runtime_error("RfcGetFunctionDesc BAPI_SYSTEM_MT_GETALERTDATA failed");
+
+    RFC_PARAMETER_DESC tndPd = {};
+    RfcGetParameterDescByName(bapi_alert_desc, cU("TREE_NODES"), &tndPd, &errInfo);
+    unsigned tndFieldCount = 0;
+    RfcGetFieldCount(tndPd.typeDescHandle, &tndFieldCount, &errInfo);
+    vlog(p.verbose, "BAPITNDEXT field count: " + to_string(tndFieldCount));
+
     static const set<string> LEAF_CLASSES = {"100", "101", "102", "111"};
-    SAP_UC message[8192] = iU("");
     int worst_rc = 0;
-    set<string> seen;  // deduplicate MTEs that appear in multiple monitor sets
+    set<string> seen;
 
     for (unsigned i = 0; i < monCount; ++i) {
         RfcMoveTo(monTable, i, &errInfo);
@@ -557,11 +563,12 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             if (!moni_filter.empty() && s_moni != moni_filter) continue;
         }
 
+        // Step 1: get monitor tree nodes via BAPI_SYSTEM_MON_GETTREE
         auto bapi_tree = RfcGetFunctionDesc(conn, cU("BAPI_SYSTEM_MON_GETTREE"), &errInfo);
         if (!bapi_tree) continue;
         auto h_tree = RfcCreateFunction(bapi_tree, &errInfo);
-        RfcSetInt(h_tree,  cU("MAX_TREE_DEPTH"),     0, &errInfo);
-        RfcSetInt(h_tree,  cU("VIS_ON_USR_LEVEL"),   6, &errInfo);
+        RfcSetInt(h_tree,   cU("MAX_TREE_DEPTH"),     0, &errInfo);
+        RfcSetInt(h_tree,   cU("VIS_ON_USR_LEVEL"),   6, &errInfo);
         RfcSetChars(h_tree, cU("EXTERNAL_USER_NAME"), cU("RFC_TEST"), 8, &errInfo);
         RFC_STRUCTURE_HANDLE monName;
         RfcGetStructure(h_tree, cU("MONITOR_NAME"), &monName, &errInfo);
@@ -569,24 +576,86 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         RfcSetChars(monName, cU("MONI_NAME"), moni_name, strlenU(moni_name), &errInfo);
         RfcInvoke(conn, h_tree, &errInfo);
 
-        unsigned rowCount = 0;
-        RFC_TABLE_HANDLE table;
-        RfcGetTable(h_tree, cU("TREE_NODES"), &table, &errInfo);
-        RfcGetRowCount(table, &rowCount, &errInfo);
+        unsigned treeCount = 0;
+        RFC_TABLE_HANDLE treeTable;
+        RfcGetTable(h_tree, cU("TREE_NODES"), &treeTable, &errInfo);
+        RfcGetRowCount(treeTable, &treeCount, &errInfo);
+        vlog(p.verbose, "TREE_NODES from GETTREE: " + to_string(treeCount));
 
-        for (unsigned j = 0; j < rowCount; ++j) {
-            RfcMoveTo(table, j, &errInfo);
+        if (treeCount == 0) {
+            RfcDestroyFunction(h_tree, &errInfo);
+            continue;
+        }
+
+        // Step 2: feed nodes into BAPI_SYSTEM_MT_GETALERTDATA (TREE_NODES is bidirectional).
+        // The BAPI enriches each node with HIGHALVAL (highest open alert color).
+        auto h_alert = RfcCreateFunction(bapi_alert_desc, &errInfo);
+        RFC_TABLE_HANDLE alertTreeTable;
+        RfcGetTable(h_alert, cU("TREE_NODES"), &alertTreeTable, &errInfo);
+
+        for (unsigned j = 0; j < treeCount; ++j) {
+            RfcMoveTo(treeTable, j, &errInfo);
+            RFC_STRUCTURE_HANDLE newRow = RfcAppendNewRow(alertTreeTable, &errInfo);
+            for (unsigned f = 0; f < tndFieldCount; ++f) {
+                RFC_FIELD_DESC fd = {};
+                RfcGetFieldDescByIndex(tndPd.typeDescHandle, f, &fd, &errInfo);
+                if (!fd.name) continue;
+                RFC_ERROR_INFO fErr = {};
+                if (fd.type == RFCTYPE_INT || fd.type == RFCTYPE_INT2 || fd.type == RFCTYPE_INT1) {
+                    RFC_INT val = 0;
+                    RfcGetInt(treeTable, fd.name, &val, &fErr);
+                    if (fErr.code == RFC_OK)
+                        RfcSetInt(newRow, fd.name, val, &errInfo);
+                } else {
+                    SAP_UC buf[4096] = iU("");
+                    unsigned len = 0;
+                    RfcGetString(treeTable, fd.name, buf, sizeofU(buf), &len, &fErr);
+                    if (fErr.code == RFC_OK && len > 0)
+                        RfcSetChars(newRow, fd.name, buf, len, &errInfo);
+                }
+            }
+        }
+        RfcDestroyFunction(h_tree, &errInfo);
+
+        RfcInvoke(conn, h_alert, &errInfo);
+
+        // Step 3: build ALUNIQNUM → MSG map from ALERT_DATA for message lookup
+        map<string, string> aluniqnum_to_msg;
+        {
+            unsigned alertCount = 0;
+            RFC_TABLE_HANDLE alertData;
+            RfcGetTable(h_alert, cU("ALERT_DATA"), &alertData, &errInfo);
+            RfcGetRowCount(alertData, &alertCount, &errInfo);
+            vlog(p.verbose, "ALERT_DATA rows: " + to_string(alertCount));
+            for (unsigned k = 0; k < alertCount; ++k) {
+                RfcMoveTo(alertData, k, &errInfo);
+                SAP_UC uniq[64] = iU(""), msg[4096] = iU("");
+                unsigned luniq = 0, lmsg = 0;
+                RfcGetString(alertData, cU("ALUNIQNUM"), uniq, sizeofU(uniq), &luniq, &errInfo);
+                RfcGetString(alertData, cU("MSG"),       msg,  sizeofU(msg),  &lmsg,  &errInfo);
+                string s_uniq = ucToStr(uniq, luniq);
+                string s_msg  = ucToStr(msg,  lmsg);
+                if (!s_uniq.empty() && !s_msg.empty())
+                    aluniqnum_to_msg[s_uniq] = s_msg;
+            }
+        }
+
+        // Step 4: walk enriched TREE_NODES — alertTreeTable now contains HIGHALVAL
+        unsigned enrichedCount = 0;
+        RfcGetRowCount(alertTreeTable, &enrichedCount, &errInfo);
+
+        for (unsigned j = 0; j < enrichedCount; ++j) {
+            RfcMoveTo(alertTreeTable, j, &errInfo);
             SAP_UC sys[256]=iU(""), mtmc[4096]=iU(""), obj[4096]=iU(""), mte[4096]=iU(""), cls[16]=iU("");
-            SAP_UC alcolor_buf[8] = iU("");
-            unsigned lsys=0, lmtmc=0, lobj=0, lmte=0, lcls=0, lcolor=0;
-            RfcGetString(table, cU("MTSYSID"),   sys,  sizeofU(sys),  &lsys,  &errInfo);
-            RfcGetString(table, cU("MTMCNAME"),  mtmc, sizeofU(mtmc), &lmtmc, &errInfo);
-            RfcGetString(table, cU("OBJECTNAME"),obj,  sizeofU(obj),  &lobj,  &errInfo);
-            RfcGetString(table, cU("MTNAMESHRT"),mte,  sizeofU(mte),  &lmte,  &errInfo);
-            RfcGetString(table, cU("MTCLASS"),   cls,  sizeofU(cls),  &lcls,  &errInfo);
-            // ALCOLOR: CCMS internal traffic-light color (1=green, 2=yellow, 3=red)
-            RFC_ERROR_INFO colorErr = {};
-            RfcGetString(table, cU("ALCOLOR"), alcolor_buf, sizeofU(alcolor_buf), &lcolor, &colorErr);
+            SAP_UC highalval_buf[8]=iU(""), aluniq_buf[64]=iU("");
+            unsigned lsys=0, lmtmc=0, lobj=0, lmte=0, lcls=0, lhigh=0, luniq=0;
+            RfcGetString(alertTreeTable, cU("MTSYSID"),    sys,           sizeofU(sys),           &lsys,  &errInfo);
+            RfcGetString(alertTreeTable, cU("MTMCNAME"),   mtmc,          sizeofU(mtmc),          &lmtmc, &errInfo);
+            RfcGetString(alertTreeTable, cU("OBJECTNAME"), obj,           sizeofU(obj),           &lobj,  &errInfo);
+            RfcGetString(alertTreeTable, cU("MTNAMESHRT"), mte,           sizeofU(mte),           &lmte,  &errInfo);
+            RfcGetString(alertTreeTable, cU("MTCLASS"),    cls,           sizeofU(cls),           &lcls,  &errInfo);
+            RfcGetString(alertTreeTable, cU("HIGHALVAL"),  highalval_buf, sizeofU(highalval_buf), &lhigh, &errInfo);
+            RfcGetString(alertTreeTable, cU("ALUNIQNUM"),  aluniq_buf,    sizeofU(aluniq_buf),    &luniq, &errInfo);
 
             string s_sys  = ucToStr(sys,  lsys);
             string s_mtmc = ucToStr(mtmc, lmtmc);
@@ -599,47 +668,31 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             if (!obj_filter.empty()  && s_obj  != obj_filter)  continue;
 
             string key = s_sys + "\\" + s_mtmc + "\\" + s_obj + "\\" + s_mte;
-            if (!seen.insert(key).second) continue;  // already processed
+            if (!seen.insert(key).second) continue;
 
-            auto uc_sys2  = utf8ToSapUc(s_sys,  errInfo);
-            auto uc_mtmc2 = utf8ToSapUc(s_mtmc, errInfo);
-            auto uc_obj2  = utf8ToSapUc(s_obj,  errInfo);
-            auto uc_mte2  = utf8ToSapUc(s_mte,  errInfo);
+            string s_highalval = ucToStr(highalval_buf, min(lhigh, 2u));
+            string s_aluniq    = ucToStr(aluniq_buf,    luniq);
+            int highal = 0;
+            try { if (!s_highalval.empty()) highal = stoi(s_highalval); } catch (...) {}
+            vlog(p.verbose, "HIGHALVAL=" + (s_highalval.empty() ? "(none)" : s_highalval)
+                          + " ALUNIQNUM=" + s_aluniq);
 
-            RFC_STRUCTURE_HANDLE tid;
-            string mtclass;
-            auto tid_fn = resolveMtClass(conn,
-                uc_mtmc2.get(), uc_mte2.get(), uc_obj2.get(), uc_sys2.get(),
-                tid, mtclass, errInfo, p.verbose);
-
-            int live_color = 0;
-            string value = readMteValue(conn, mtclass, tid, message, sizeofU(message), errInfo, p.verbose, &live_color);
-            RfcDestroyFunction(tid_fn, &errInfo);
-
-            // Color source: prefer the live BAPI color (same source as -check) so we
-            // always reflect the current MTE state, not a potentially stale tree ALCOLOR.
-            // Fall back to tree ALCOLOR when the BAPI returns no color (e.g. class 111).
-            int node_rc = 0;
-            string s_alcolor = (colorErr.code == RFC_OK) ? ucToStr(alcolor_buf, min(lcolor, 2u)) : "";
-            vlog(p.verbose, "ALCOLOR=" + (s_alcolor.empty() ? "(none)" : s_alcolor)
-                          + " live_color=" + to_string(live_color));
-            if (live_color > 0) {
-                if      (live_color == 3) node_rc = 2;
-                else if (live_color == 2) node_rc = 1;
-            } else if (!s_alcolor.empty()) {
-                int color = 0;
-                try { color = stoi(s_alcolor); } catch (...) {}
-                if      (color == 3) node_rc = 2;  // red    → CRITICAL
-                else if (color == 2) node_rc = 1;  // yellow → WARNING
-            }
+            int node_rc = (highal == 3) ? 2 : (highal == 2) ? 1 : 0;
             worst_rc = max(worst_rc, node_rc);
+
+            string value;
+            if (node_rc > 0) {
+                auto it = aluniqnum_to_msg.find(s_aluniq);
+                if (it != aluniqnum_to_msg.end()) value = it->second;
+            }
 
             const char* label = (node_rc == 2) ? "CRIT" : (node_rc == 1) ? "WARN" : "OK  ";
             cout << label << "  " << s_sys << "\\" << s_mtmc << "\\" << s_obj << "\\" << s_mte;
             if (!value.empty()) cout << "  " << value;
             cout << "\n";
         }
-        RfcDestroyFunction(h_tree, &errInfo);
+
+        RfcDestroyFunction(h_alert, &errInfo);
     }
     RfcDestroyFunction(h_list, &errInfo);
     return worst_rc;
