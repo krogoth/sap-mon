@@ -22,4 +22,9 @@ if [[ -f "${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so" ]]; then
     export CCL_PROFILE="${SAP_MON_BASE_DIR}/config/sapcrypto.ini"
 fi
 
-exec "${SAP_MON_BASE_DIR}/sap_mon" "-inipath=${SAP_MON_BASE_DIR}/config/" "$@"
+inipath_arg=()
+for arg in "$@"; do
+    [[ "$arg" == -dest=* ]] && inipath_arg=("-inipath=${SAP_MON_BASE_DIR}/config/") && break
+done
+
+exec "${SAP_MON_BASE_DIR}/sap_mon" "${inipath_arg[@]}" "$@"
