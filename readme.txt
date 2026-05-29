@@ -1,6 +1,8 @@
 A small monitoring tool to check SAP base health.
 The tool reads SAP CCMS values and sapcontrol (J2EE) values and checks them against your defined thresholds.
-When no thresholds are given, the exit code is derived directly from SAP's CCMS alert color (1=green/OK, 2=yellow/WARNING, 3=red/CRITICAL).
+When no thresholds are given, the exit code is derived from SAP's CCMS alert color (1=green/OK, 2=yellow/WARNING, 3=red/CRITICAL).
+For -checkall, the color comes from BAPI_SYSTEM_MT_GETALERTDATA (HIGHALVAL field), which reflects the highest open/unacknowledged alert state — consistent with what RZ20 shows after operator acknowledgement.
+For -check, the color comes from the per-MTE value BAPI (LASTALSTAT).
 Exit codes follow the Nagios/Icinga convention (0=OK, 1=WARNING, 2=CRITICAL).
 It is based on the SAP RFC SDK 7.50 for SAP communication and SOAP/XML data structures.
 First download and configure the SAP RFC SDK: https://support.sap.com/en/product/connectors/nwrfcsdk.html
@@ -86,8 +88,13 @@ Usage:
 ./sap_mon -show -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100
 
 #Check all MTEs under a monitor path (format: SID\MTMCNAME[\OBJECTNAME])
-#Exit code is based on ALCOLOR from BAPI_SYSTEM_MON_GETTREE (same as RZ20 traffic light)
+#Color source: HIGHALVAL from BAPI_SYSTEM_MT_GETALERTDATA — reflects open/unacknowledged alert state, consistent with RZ20.
+#Acknowledging an alert in RZ20 will turn the check green without requiring deletion of job history or log entries.
+#Output: one status line per leaf MTE, followed by indented alert messages for non-green nodes.
 ./sap_mon -checkall -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor='AL1\saplnx_AL1_01\Background'
+
+#Filter by monitor set (MS_NAME[\MONI_NAME])
+./sap_mon -checkall -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor-set='System Monitoring\Background Processing'
 
 #CCMS Status attribute
 ./sap_mon -check -username=RFC_TEST -password=Test123456 -hostname=saplnx -sid=AL1 -sysnum=01 -client=100 -monitor='AL1\saplnx_AL1_01\DatabaseClient\DBConnection\DBServer'
