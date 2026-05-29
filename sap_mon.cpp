@@ -447,8 +447,12 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
     RfcDestroyFunction(tid_fn, &errInfo);  // safe — readMteValue is done with tid
 
     if (value.empty()) {
-        RfcCloseConnection(conn, &errInfo);
-        exit(-1);
+        if (mtclass.empty())
+            cout << "UNKNOWN - MTE not found: " << monitor_name << endl;
+        else
+            cout << "UNKNOWN - MTCLASS " << mtclass << " not readable by -check"
+                 << " (container node? use -checkall)" << endl;
+        return 3;
     }
 
     static const char* color_names[] = { "unknown", "green", "yellow", "red" };
