@@ -13,15 +13,13 @@ if [[ ! -x "${SAP_MON_BASE_DIR}/sap_mon" ]]; then
     exit 1
 fi
 
-(
-    export LD_LIBRARY_PATH="${SAP_MON_BASE_DIR}/nwrfcsdk/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export LD_LIBRARY_PATH="${SAP_MON_BASE_DIR}/nwrfcsdk/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
-    if [[ -f "${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so" ]]; then
-        export SNC_LIB_64="${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so"
-        export CCL_TRACE_DIR="${SAP_MON_BASE_DIR}/logs/"
-        export SECUDIR="${SAP_MON_BASE_DIR}/config/sec/"
-        export CCL_PROFILE="${SAP_MON_BASE_DIR}/config/sapcrypto.ini"
-    fi
+if [[ -f "${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so" ]]; then
+    export SNC_LIB_64="${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so"
+    export CCL_TRACE_DIR="${SAP_MON_BASE_DIR}/logs/"
+    export SECUDIR="${SAP_MON_BASE_DIR}/config/sec/"
+    export CCL_PROFILE="${SAP_MON_BASE_DIR}/config/sapcrypto.ini"
+fi
 
-    exec "${SAP_MON_BASE_DIR}/sap_mon" "-inipath=${SAP_MON_BASE_DIR}/config/" "$@"
-)
+exec "${SAP_MON_BASE_DIR}/sap_mon" "-inipath=${SAP_MON_BASE_DIR}/config/" "$@"
