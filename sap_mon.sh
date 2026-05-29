@@ -19,7 +19,9 @@ if [[ -f "${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so" ]]; then
     export SNC_LIB_64="${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so"
     export CCL_TRACE_DIR="${SAP_MON_BASE_DIR}/logs/"
     export SECUDIR="${SAP_MON_BASE_DIR}/config/sec/"
-    export CCL_PROFILE="${SAP_MON_BASE_DIR}/config/sapcrypto.ini"
+    if [[ -f "${SAP_MON_BASE_DIR}/config/sapcrypto.ini" ]]; then
+        export CCL_PROFILE="${SAP_MON_BASE_DIR}/config/sapcrypto.ini"
+    fi
 fi
 
 inipath_arg=()
