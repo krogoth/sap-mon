@@ -633,18 +633,32 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             for (unsigned k = 0; k < alertCount; ++k) {
                 RfcMoveTo(alertData, k, &errInfo);
                 SAP_UC sys[256]=iU(""), mtmc[4096]=iU(""), msg[4096]=iU("");
-                unsigned lsys=0, lmtmc=0, lmsg=0;
+                SAP_UC dat[16]=iU(""), tim[16]=iU("");
+                unsigned lsys=0, lmtmc=0, lmsg=0, ldat=0, ltim=0;
                 RFC_INT mtuid_val = 0;
-                RfcGetString(alertData, cU("MTSYSID"),  sys,  sizeofU(sys),  &lsys,  &errInfo);
-                RfcGetString(alertData, cU("MTMCNAME"), mtmc, sizeofU(mtmc), &lmtmc, &errInfo);
-                RfcGetInt   (alertData, cU("MTUID"),    &mtuid_val,           &errInfo);
-                RfcGetString(alertData, cU("MSG"),      msg,  sizeofU(msg),  &lmsg,  &errInfo);
+                RfcGetString(alertData, cU("MTSYSID"),   sys,  sizeofU(sys),  &lsys,  &errInfo);
+                RfcGetString(alertData, cU("MTMCNAME"),  mtmc, sizeofU(mtmc), &lmtmc, &errInfo);
+                RfcGetInt   (alertData, cU("MTUID"),     &mtuid_val,           &errInfo);
+                RfcGetString(alertData, cU("ALENTRDAT"), dat,  sizeofU(dat),  &ldat,  &errInfo);
+                RfcGetString(alertData, cU("ALENTRTIM"), tim,  sizeofU(tim),  &ltim,  &errInfo);
+                RfcGetString(alertData, cU("MSG"),       msg,  sizeofU(msg),  &lmsg,  &errInfo);
                 string s_msg = ucToStr(msg, lmsg);
                 if (s_msg.empty()) continue;
+
+                // Format YYYYMMDD+HHMMSS → "YYYY-MM-DD HH:MM:SS  "
+                string s_dat = ucToStr(dat, ldat);
+                string s_tim = ucToStr(tim, ltim);
+                string prefix;
+                if (s_dat.size() == 8 && s_tim.size() == 6) {
+                    prefix = s_dat.substr(0,4) + "-" + s_dat.substr(4,2) + "-" + s_dat.substr(6,2)
+                           + " " + s_tim.substr(0,2) + ":" + s_tim.substr(2,2) + ":" + s_tim.substr(4,2)
+                           + "  ";
+                }
+
                 string nodekey = ucToStr(sys, lsys) + "\\"
                                + ucToStr(mtmc, lmtmc) + "\\"
                                + to_string(mtuid_val);
-                node_to_msgs[nodekey].push_back(s_msg);
+                node_to_msgs[nodekey].push_back(prefix + s_msg);
             }
         }
 
