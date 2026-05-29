@@ -639,8 +639,8 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
                 RfcGetString(alertData, cU("MTSYSID"),   sys,  sizeofU(sys),  &lsys,  &errInfo);
                 RfcGetString(alertData, cU("MTMCNAME"),  mtmc, sizeofU(mtmc), &lmtmc, &errInfo);
                 RfcGetInt   (alertData, cU("MTUID"),     &mtuid_val,           &errInfo);
-                RfcGetString(alertData, cU("ALENTRDAT"), dat,  sizeofU(dat),  &ldat,  &errInfo);
-                RfcGetString(alertData, cU("ALENTRTIM"), tim,  sizeofU(tim),  &ltim,  &errInfo);
+                RfcGetString(alertData, cU("ALERTDATE"), dat,  sizeofU(dat),  &ldat,  &errInfo);
+                RfcGetString(alertData, cU("ALERTTIME"), tim,  sizeofU(tim),  &ltim,  &errInfo);
                 RfcGetString(alertData, cU("MSG"),       msg,  sizeofU(msg),  &lmsg,  &errInfo);
                 string s_msg = ucToStr(msg, lmsg);
                 if (s_msg.empty()) continue;
