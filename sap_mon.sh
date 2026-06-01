@@ -25,8 +25,12 @@ if [[ -f "${SAP_MON_BASE_DIR}/sapcryptolib/libsapcrypto.so" ]]; then
 fi
 
 inipath_arg=()
+has_dest=0
+has_inipath=0
 for arg in "$@"; do
-    [[ "$arg" == -dest=* ]] && inipath_arg=("-inipath=${SAP_MON_BASE_DIR}/config/") && break
+    [[ "$arg" == -dest=* ]]    && has_dest=1
+    [[ "$arg" == -inipath=* ]] && has_inipath=1
 done
+[[ $has_dest -eq 1 && $has_inipath -eq 0 ]] && inipath_arg=("-inipath=${SAP_MON_BASE_DIR}/config/")
 
-exec "${SAP_MON_BASE_DIR}/sap_mon" "${inipath_arg[@]}" "$@"
+exec "${SAP_MON_BASE_DIR}/sap_mon" "$@" "${inipath_arg[@]}"
