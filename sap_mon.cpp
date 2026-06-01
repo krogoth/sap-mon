@@ -1110,7 +1110,7 @@ static const set<string> RFC_CONNECTED_MODES = {
  * No RfcUTF8ToSAPUC conversion needed for CLI arguments.
  */
 static CliParams parseArgsU(int argc, SAP_UC** argv) {
-    if (argc < 2) { p.mode = "-help"; return p; }
+    if (argc < 2) throw std::runtime_error("Usage: sap_mon -<mode> [options]");
 
     CliParams p;
     map<string, string> kv;
@@ -1317,6 +1317,11 @@ int mainU(int argc, SAP_UC** argv) {
 
     for (int sig : {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGTERM, SIGINT})
         signal(sig, signalHandler);
+
+    if (argc < 2) {
+        print_help();
+        return 3;
+    }
 
     // --- Parsing CLI (conversion SAP_UC→string pour la logique interne) ---
     CliParams p;
