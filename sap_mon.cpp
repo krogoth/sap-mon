@@ -447,8 +447,19 @@ int handle_check(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_INFO&
     RfcDestroyFunction(tid_fn, &errInfo);  // safe — readMteValue is done with tid
 
     if (value.empty()) {
-        RfcCloseConnection(conn, &errInfo);
-        exit(-1);
+        static const set<string> READABLE_CLASSES = {"100", "101", "102", "111"};
+        if (mtclass.empty()) {
+            cout << "UNKNOWN - MTE not found: " << monitor_name << endl;
+            return 3;
+        }
+        if (!READABLE_CLASSES.count(mtclass)) {
+            cout << "UNKNOWN - MTCLASS " << mtclass << " not readable by -check"
+                 << " (container node? use -checkall)" << endl;
+            return 3;
+        }
+        // Known class returned no value (e.g. log attribute with no entries) → OK
+        cout << "OK - (no data)" << endl;
+        return 0;
     }
 
     static const char* color_names[] = { "unknown", "green", "yellow", "red" };
@@ -547,6 +558,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 
     static const set<string> LEAF_CLASSES = {"100", "101", "102", "111"};
     int worst_rc = 0;
+    int node_count = 0;
     set<string> seen;
 
     for (unsigned i = 0; i < monCount; ++i) {
@@ -702,6 +714,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             int node_rc = (highal == 3) ? 2 : (highal == 2) ? 1 : 0;
             worst_rc = max(worst_rc, node_rc);
 
+            ++node_count;
             const char* label = (node_rc == 2) ? "CRIT" : (node_rc == 1) ? "WARN" : "OK  ";
             string path = s_sys + "\\" + s_mtmc + "\\" + s_obj + "\\" + s_mte;
             cout << label << "  " << path << "\n";
@@ -719,6 +732,11 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         RfcDestroyFunction(h_alert, &errInfo);
     }
     RfcDestroyFunction(h_list, &errInfo);
+
+    if (node_count == 0) {
+        cout << "UNKNOWN - No monitoring nodes found — check -monitor / -monitor-set configuration" << endl;
+        return 3;
+    }
     return worst_rc;
 }
 
@@ -1092,7 +1110,7 @@ static const set<string> RFC_CONNECTED_MODES = {
  * No RfcUTF8ToSAPUC conversion needed for CLI arguments.
  */
 static CliParams parseArgsU(int argc, SAP_UC** argv) {
-    if (argc < 2) throw std::runtime_error("Usage: sap_mon2 -<mode> [options]");
+    if (argc < 2) throw std::runtime_error("Usage: sap_mon -<mode> [options]");
 
     CliParams p;
     map<string, string> kv;
@@ -1299,6 +1317,11 @@ int mainU(int argc, SAP_UC** argv) {
 
     for (int sig : {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGTERM, SIGINT})
         signal(sig, signalHandler);
+
+    if (argc < 2) {
+        print_help();
+        return 3;
+    }
 
     // --- Parsing CLI (conversion SAP_UC→string pour la logique interne) ---
     CliParams p;

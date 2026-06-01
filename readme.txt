@@ -5,10 +5,56 @@ For -checkall, the color comes from BAPI_SYSTEM_MT_GETALERTDATA (HIGHALVAL field
 For -check, the color comes from the per-MTE value BAPI (LASTALSTAT).
 Exit codes follow the Nagios/Icinga convention (0=OK, 1=WARNING, 2=CRITICAL).
 It is based on the SAP RFC SDK 7.50 for SAP communication and SOAP/XML data structures.
-First download and configure the SAP RFC SDK: https://support.sap.com/en/product/connectors/nwrfcsdk.html
-Then run "make" to compile (pay attention to the library path in the Makefile).
 A "sap authorization role" transport for the SAP system is also included.
 Import the transport request to use minimum permissions for the sap_mon monitoring user.
+
+
+Directory structure
+-------------------
+After compilation, the recommended layout is:
+
+  sap_mon/
+  ├── sap_mon              # compiled binary
+  ├── sap_mon.sh           # wrapper script (sets library paths, run this instead of sap_mon directly)
+  ├── nwrfcsdk/            # SAP NetWeaver RFC SDK (required)
+  │   └── lib/             # shared libraries (libsapnwrfc.so, libicuuc.so, ...)
+  ├── sapcryptolib/        # SAP CommonCryptoLib (optional, for SNC/encrypted connections)
+  │   └── libsapcrypto.so
+  ├── config/              # runtime configuration
+  │   ├── sapnwrfc.ini     # RFC destinations (used with -dest= or -inipath=)
+  │   ├── sapcrypto.ini    # CommonCryptoLib profile (required if using sapcryptolib)
+  │   └── sec/             # PSE files for SNC (SECUDIR)
+  └── logs/                # RFC/SNC/CPIC trace output (created automatically by sap_mon.sh)
+
+Setting up nwrfcsdk (required)
+  1. Download "SAP NetWeaver RFC SDK 7.50" from the SAP Support Portal:
+       https://support.sap.com/en/product/connectors/nwrfcsdk.html
+     (requires an S-user account)
+  2. Extract the archive and copy the resulting directory so that
+     nwrfcsdk/lib/libsapnwrfc.so exists relative to sap_mon.sh.
+  3. Run "make" to compile — check the library path in the Makefile if needed.
+
+Setting up sapcryptolib (optional — only needed for SNC-encrypted connections)
+  1. Download "SAP Cryptographic Library" (sapcrypto) from the SAP Support Portal.
+  2. Place libsapcrypto.so in sapcryptolib/.
+  3. Create config/sapcrypto.ini with at minimum:
+       ccl/snc/enable_kerberos=0
+  4. Place your PSE file(s) in config/sec/ and set SECUDIR accordingly.
+  When sapcryptolib/libsapcrypto.so is present, sap_mon.sh sets all required
+  environment variables (SNC_LIB_64, SECUDIR, CCL_PROFILE) automatically.
+
+Using sap_mon.sh
+  Always invoke sap_mon.sh instead of sap_mon directly. It:
+  - Sets LD_LIBRARY_PATH to nwrfcsdk/lib
+  - Configures SNC crypto paths if sapcryptolib is present
+  - Passes -inipath=config/ automatically (overridable by passing -inipath= explicitly)
+  - Creates the logs/ directory if missing
+  - Redirects RFC/SNC/CPIC trace files to logs/
+
+  Example:
+    ./sap_mon.sh -checkall -dest=AL1_RFC
+
+
 
 The program can check CCMS for "Performance attribute", "Status attribute", "Log attribute" and "Object description/Text attribute".
 You can use a SAP router string to connect to your host — just put the router string instead of the hostname.
