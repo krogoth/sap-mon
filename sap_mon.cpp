@@ -558,6 +558,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
 
     static const set<string> LEAF_CLASSES = {"100", "101", "102", "111"};
     int worst_rc = 0;
+    int node_count = 0;
     set<string> seen;
 
     for (unsigned i = 0; i < monCount; ++i) {
@@ -713,6 +714,7 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
             int node_rc = (highal == 3) ? 2 : (highal == 2) ? 1 : 0;
             worst_rc = max(worst_rc, node_rc);
 
+            ++node_count;
             const char* label = (node_rc == 2) ? "CRIT" : (node_rc == 1) ? "WARN" : "OK  ";
             string path = s_sys + "\\" + s_mtmc + "\\" + s_obj + "\\" + s_mte;
             cout << label << "  " << path << "\n";
@@ -730,6 +732,11 @@ int handle_checkall(RFC_CONNECTION_HANDLE conn, const CliParams& p, RFC_ERROR_IN
         RfcDestroyFunction(h_alert, &errInfo);
     }
     RfcDestroyFunction(h_list, &errInfo);
+
+    if (node_count == 0) {
+        cout << "UNKNOWN - No monitoring nodes found — check -monitor / -monitor-set configuration" << endl;
+        return 3;
+    }
     return worst_rc;
 }
 
